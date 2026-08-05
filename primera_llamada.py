@@ -1,9 +1,15 @@
-import os  # Importa el módulo para trabajar con variables de entorno si se necesitara
+import os # Para acceso a variables de entorno si es necesario
+import sys  # Importa el módulo para trabajar con variables de entorno si se necesitara
 from dotenv import load_dotenv  # Carga las variables definidas en el archivo .env
 from groq import Groq  # Cliente oficial de Groq para hacer llamadas a la API
 
 load_dotenv()  # Lee el archivo .env y carga las variables de entorno en el proceso
-client = Groq()  # Crea el cliente Groq, usando GROQ_API_KEY de la variable de entorno
+api_key = os.getenv("GROQ_API_KEY") # Obtiene la clave de API de Groq desde las variables de entorno
+if not api_key:
+    print("Error: variable de entorno GROQ_API_KEY no definida.")
+    sys.exit(1)
+
+client = Groq(api_key=api_key)  # Crea el cliente Groq, usando GROQ_API_KEY de la variable de entorno
 
 while True:  # Bucle infinito para mantener la conversación hasta que el usuario escriba "salir"
     pregunta = input("Escribe una pregunta (o 'salir' para terminar): ").strip()
@@ -14,16 +20,21 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
         print("Saliendo...")
         break  # ...salimos del bucle y terminamos el programa
 
-    response = client.chat.completions.create(
-        # Hace la llamada a la API de Groq para generar una respuesta de chat
-        messages=[
-            {"role": "user", "content": pregunta}
-            # Enviamos un mensaje de tipo usuario con el texto que escribió el usuario
-        ],
-        model="llama-3.1-8b-instant",
-        # Modelo de Groq que se usará para generar la respuesta
-    )
-
+    try:
+        response = client.chat.completions.create(
+            # Hace la llamada a la API de Groq para generar una respuesta de chat
+            messages=[
+                {"role": "user", "content": pregunta}
+                # Enviamos un mensaje de tipo usuario con el texto que escribió el usuario
+            ],
+            model="llama-3.1-8b-instant",
+            # Modelo de Groq que se usará para generar la respuesta
+        )
+    except Exception as e:
+        print(f"Error al llamar a la API de Groq: {e}")
+        print("Asegúrate de que la variable de entorno GROQ_API_KEY esté definida correctamente.")
+        continue  # Continuamos con la siguiente iteración del bucle para que el usuario pueda intentar de nuevo
+    
     print("Respuesta:")
     # Imprime el encabezado para la respuesta del modelo
 
