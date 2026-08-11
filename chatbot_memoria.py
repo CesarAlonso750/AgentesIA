@@ -1,5 +1,8 @@
-import os # Para acceso a variables de entorno si es necesario
-import sys  # Importa el módulo para trabajar con variables de entorno si se necesitara
+import json  # Permite convertir y guardar el historial en formato JSON
+import os  # Permite acceder a las variables de entorno
+import sys  # Permite terminar el programa si falta la clave de la API
+from datetime import datetime  # Permite obtener la fecha y hora actuales
+
 from dotenv import load_dotenv  # Carga las variables definidas en el archivo .env
 from groq import Groq  # Cliente oficial de Groq para hacer llamadas a la API
 
@@ -33,14 +36,46 @@ mensajes = [
     }
 ]
 
+def guardar_historial(historial):
+    """Guarda el historial completo de la conversación en un archivo JSON."""
+
+    # Obtiene la fecha y la hora actuales.
+    # El formato evita caracteres no válidos en nombres de archivo,
+    # como los dos puntos utilizados normalmente en las horas.
+    fecha_hora = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Construye un nombre como:
+    # conversacion_2026-08-12_18-30-45.json
+    nombre_archivo = f"conversacion_{fecha_hora}.json"
+
+    # Abre un archivo nuevo en modo escritura.
+    # "with" se encarga de cerrarlo automáticamente al terminar.
+    with open(nombre_archivo, "w", encoding="utf-8") as archivo:
+        # Convierte la lista de mensajes a JSON y la escribe en el archivo.
+        json.dump(
+            historial,
+            archivo,
+            ensure_ascii=False,  # Conserva correctamente tildes y caracteres como la ñ
+            indent=4,  # Organiza el JSON para que resulte fácil de leer
+        )
+
+    # Informa al usuario del nombre del archivo generado.
+    print(f"Historial guardado en: {nombre_archivo}")
+
 while True:  # Bucle infinito para mantener la conversación hasta que el usuario escriba "salir"
     pregunta = input("Escribe una pregunta (o 'salir' para terminar): ").strip()
     # Lee la entrada del usuario y elimina espacios al principio y al final
 
     if pregunta.lower() == "salir":
-        # Si el usuario escribe "salir" en cualquier combinación de mayúsculas/minúsculas...
+        # Si el usuario escribe "salir", llama a la función
+        # para guardar todos los mensajes acumulados.
+        guardar_historial(mensajes)
+
+        # Informa de que el programa va a terminar.
         print("Saliendo...")
-        break  # ...salimos del bucle y terminamos el programa
+
+        # Finaliza el bucle de conversación.
+        break
     
     # Añade la pregunta actual al historial con el rol "user".
     # Al estar después de la comprobación anterior, la palabra "salir"
