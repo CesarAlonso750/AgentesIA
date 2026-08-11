@@ -99,6 +99,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
 
         # Indica el modelo de Groq que generará la respuesta.
         model="llama-3.1-8b-instant",
+        temperature=0, # Reduce la aleatoriedad para producir respuestas más consistentes y facilitar las comparaciones.
         )
     except Exception as e:
         print(f"Error al llamar a la API de Groq: {e}")
