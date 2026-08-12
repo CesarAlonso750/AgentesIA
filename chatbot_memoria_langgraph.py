@@ -133,7 +133,10 @@ state: MessagesState = {
 
 # Bucle interactivo
 while True:
-    pregunta = input("Tú: ").strip() # Lee la entrada del usuario y elimina espacios al principio y al final
+    pregunta = input(
+    "Tú ('/resumen' para resumir o 'salir' para terminar): "
+    ).strip()
+    
     if pregunta.lower() == "salir":
         # Extrae del estado la lista completa de objetos de mensaje
         # y la envía a la función de guardado.
@@ -145,9 +148,23 @@ while True:
         # Finaliza el bucle de conversación.
         break
 
-    # Convierte la pregunta en un mensaje estructurado de usuario.
-    # Esto permite que el modelo distinga claramente quién escribió el texto.
-    mensaje_usuario = HumanMessage(content=pregunta)
+    # Comprueba si el usuario ha solicitado un resumen.
+    if pregunta.lower() == "/resumen":
+        # Convierte el comando especial en una instrucción detallada.
+        # Cuando el nodo reciba el estado, tendrá acceso a todos los
+        # mensajes anteriores y podrá resumirlos.
+        contenido_usuario = (
+            "Resume la conversación mantenida hasta este momento. "
+            "Incluye los temas principales y la información importante, "
+            "pero no añadas información nueva."
+        )
+    else:
+        # Conserva el texto original cuando no es un comando especial.
+        contenido_usuario = pregunta    
+
+    # Crea el mensaje utilizando la pregunta normal o la instrucción
+    # generada a partir del comando especial "/resumen".
+    mensaje_usuario = HumanMessage(content=contenido_usuario)
 
     # Añade el mensaje del usuario al historial conservado en el estado.
     state["messages"].append(mensaje_usuario)
