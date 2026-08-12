@@ -31,6 +31,61 @@ SYSTEM_PROMPT = (
     "y utiliza ejemplos sencillos."
 )
 
+def convertir_mensaje_a_diccionario(mensaje):
+    """Convierte un mensaje de LangChain en un diccionario serializable."""
+
+    # Relaciona los tipos utilizados por LangChain con los roles
+    # habituales de una conversación.
+    roles = {
+        "system": "system",
+        "human": "user",
+        "ai": "assistant",
+    }
+
+    # Obtiene el rol equivalente.
+    # Si aparece un tipo desconocido, conserva su nombre original
+    # para no perder información.
+    role = roles.get(mensaje.type, mensaje.type)
+
+    # Devuelve únicamente los datos necesarios para reconstruir
+    # y leer fácilmente la conversación.
+    return {
+        "role": role,
+        "content": mensaje.content,
+    }
+    
+def guardar_historial(historial):
+    """Guarda el historial de LangGraph en un archivo JSON legible."""
+
+    # Convierte cada objeto de mensaje en un diccionario sencillo.
+    # La comprensión de lista aplica la función a todo el historial.
+    historial_serializable = [
+        convertir_mensaje_a_diccionario(mensaje)
+        for mensaje in historial
+    ]
+
+    # Obtiene la fecha y hora actuales utilizando un formato
+    # compatible con los nombres de archivo.
+    fecha_hora = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Incluye "langgraph" para distinguir este historial
+    # del generado por la versión básica.
+    nombre_archivo = f"conversacion_langgraph_{fecha_hora}.json"
+
+    # Abre el archivo en modo escritura y lo cierra automáticamente.
+    with open(nombre_archivo, "w", encoding="utf-8") as archivo:
+        # Guarda la lista convertida con un formato fácil de leer.
+        json.dump(
+            historial_serializable,
+            archivo,
+            ensure_ascii=False,  # Conserva tildes, eñes y otros caracteres
+            indent=4,  # Organiza visualmente el contenido del JSON
+        )
+
+    # Muestra dónde se ha guardado la conversación.
+    print(f"Historial guardado en: {nombre_archivo}")    
+
+
 # Inicializamos el modelo ChatGroq
 llm = ChatGroq(api_key=api_key, model="llama-3.1-8b-instant", temperature=0)
 
@@ -78,9 +133,16 @@ state: MessagesState = {
 
 # Bucle interactivo
 while True:
-    pregunta = input("Tú: ").strip()
+    pregunta = input("Tú: ").strip() # Lee la entrada del usuario y elimina espacios al principio y al final
     if pregunta.lower() == "salir":
+        # Extrae del estado la lista completa de objetos de mensaje
+        # y la envía a la función de guardado.
+        guardar_historial(state["messages"])
+
+        # Informa de que el chatbot va a terminar.
         print("Saliendo...")
+
+        # Finaliza el bucle de conversación.
         break
 
     # Convierte la pregunta en un mensaje estructurado de usuario.
