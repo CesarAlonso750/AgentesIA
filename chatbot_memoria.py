@@ -63,7 +63,11 @@ def guardar_historial(historial):
     print(f"Historial guardado en: {nombre_archivo}")
 
 while True:  # Bucle infinito para mantener la conversación hasta que el usuario escriba "salir"
-    pregunta = input("Escribe una pregunta (o 'salir' para terminar): ").strip()
+    # Informa al usuario de los dos comandos especiales disponibles.
+    pregunta = input(
+        "Escribe una pregunta, '/resumen' para resumir "
+        "o 'salir' para terminar: "
+    ).strip()
     # Lee la entrada del usuario y elimina espacios al principio y al final
 
     if pregunta.lower() == "salir":
@@ -77,6 +81,20 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
         # Finaliza el bucle de conversación.
         break
     
+    # Comprueba si el usuario ha utilizado el comando especial "/resumen".
+    if pregunta.lower() == "/resumen":
+        # Transforma el comando en una instrucción comprensible para el modelo.
+        # El historial anterior ya está en la lista "mensajes", por lo que
+        # el modelo podrá resumir la conversación mantenida hasta este momento.
+        contenido_usuario = (
+            "Resume la conversación mantenida hasta este momento. "
+            "Incluye los temas principales y la información importante, "
+            "pero no añadas información nueva."
+        )
+    else:
+        # Si no es un comando especial, conserva la pregunta original.
+        contenido_usuario = pregunta
+    
     # Añade la pregunta actual al historial con el rol "user".
     # Al estar después de la comprobación anterior, la palabra "salir"
     # no se guardará como parte de la conversación.
@@ -86,7 +104,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
             "role": "user",
 
             # Guarda el texto introducido en la terminal.
-            "content": pregunta,
+            "content": contenido_usuario,
         }
     )
 
