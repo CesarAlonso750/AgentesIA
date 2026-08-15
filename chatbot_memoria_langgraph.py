@@ -53,7 +53,7 @@ def convertir_mensaje_a_diccionario(mensaje):
         "role": role,
         "content": mensaje.content,
     }
-    
+
 def guardar_historial(historial):
     """Guarda el historial de LangGraph en un archivo JSON legible."""
 
@@ -83,7 +83,7 @@ def guardar_historial(historial):
         )
 
     # Muestra dónde se ha guardado la conversación.
-    print(f"Historial guardado en: {nombre_archivo}")    
+    print(f"Historial guardado en: {nombre_archivo}")
 
 
 # Inicializamos el modelo ChatGroq
@@ -136,7 +136,7 @@ while True:
     pregunta = input(
     "Tú ('/resumen' para resumir o 'salir' para terminar): "
     ).strip()
-    
+
     if pregunta.lower() == "salir":
         # Extrae del estado la lista completa de objetos de mensaje
         # y la envía a la función de guardado.
@@ -160,7 +160,7 @@ while True:
         )
     else:
         # Conserva el texto original cuando no es un comando especial.
-        contenido_usuario = pregunta    
+        contenido_usuario = pregunta
 
     # Crea el mensaje utilizando la pregunta normal o la instrucción
     # generada a partir del comando especial "/resumen".

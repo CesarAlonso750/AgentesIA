@@ -80,7 +80,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
 
         # Finaliza el bucle de conversación.
         break
-    
+
     # Comprueba si el usuario ha utilizado el comando especial "/resumen".
     if pregunta.lower() == "/resumen":
         # Transforma el comando en una instrucción comprensible para el modelo.
@@ -94,7 +94,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
     else:
         # Si no es un comando especial, conserva la pregunta original.
         contenido_usuario = pregunta
-    
+
     # Añade la pregunta actual al historial con el rol "user".
     # Al estar después de la comprobación anterior, la palabra "salir"
     # no se guardará como parte de la conversación.
@@ -123,7 +123,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
         print(f"Error al llamar a la API de Groq: {e}")
         print("Asegúrate de que la variable de entorno GROQ_API_KEY esté definida correctamente.")
         continue  # Continuamos con la siguiente iteración del bucle para que el usuario pueda intentar de nuevo
-    
+
     # Extrae el texto generado por el modelo y lo guarda en una variable.
     respuesta_asistente = response.choices[0].message.content
 
