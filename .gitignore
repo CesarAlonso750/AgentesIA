@@ -1,1 +1,5 @@
+# Evita subir a GitHub el archivo que contiene la clave de la API.
 .env
+
+# Evita subir los historiales personales generados por el chatbot.
+conversacion_*.json
