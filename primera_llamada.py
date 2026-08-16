@@ -27,7 +27,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
                 {"role": "user", "content": pregunta}
                 # Enviamos un mensaje de tipo usuario con el texto que escribió el usuario
             ],
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             # Modelo de Groq que se usará para generar la respuesta
         )
     except Exception as e:

@@ -87,7 +87,7 @@ def guardar_historial(historial):
 
 
 # Inicializamos el modelo ChatGroq
-llm = ChatGroq(api_key=api_key, model="llama-3.1-8b-instant", temperature=0)
+llm = ChatGroq(api_key=api_key, model="openai/gpt-oss-20b", temperature=0)
 
 
 def answer_node(state: MessagesState) -> dict:

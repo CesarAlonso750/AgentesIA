@@ -18,7 +18,7 @@ class ChatState(TypedDict):
     messages: List[str]
 
 # Inicializamos el modelo ChatGroq
-llm = ChatGroq(api_key=api_key, model="llama-3.1-8b-instant", temperature=0)
+llm = ChatGroq(api_key=api_key, model="openai/gpt-oss-20b", temperature=0)
 
 # Nodo que genera la respuesta del agente en función del último mensaje del usuario
 def answer_node(state: ChatState) -> ChatState:

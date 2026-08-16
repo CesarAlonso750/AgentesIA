@@ -116,7 +116,7 @@ while True:  # Bucle infinito para mantener la conversación hasta que el usuari
         messages=mensajes,
 
         # Indica el modelo de Groq que generará la respuesta.
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         temperature=0, # Reduce la aleatoriedad para producir respuestas más consistentes y facilitar las comparaciones.
         )
     except Exception as e:
