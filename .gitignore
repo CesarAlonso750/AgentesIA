@@ -3,3 +3,9 @@
 
 # Evita subir los historiales personales generados por el chatbot.
 conversacion_*.json
+
+# Evita subir las carpetas de caché generadas por Python.
+__pycache__/
+
+# Evita subir archivos compilados de Python.
+*.pyc
