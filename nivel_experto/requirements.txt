@@ -1,0 +1,23 @@
+# Cliente utilizado por la implementación manual para llamar a Groq.
+groq==0.37.1
+
+# Componentes de mensajes y herramientas utilizados con LangGraph.
+langchain-core==1.5.3
+
+# Integración entre LangChain y los modelos alojados en Groq.
+langchain-groq==1.1.3
+
+# Framework utilizado para la segunda implementación de la orquestación.
+langgraph==1.2.10
+
+# Validación de estructuras generadas por los agentes.
+pydantic==2.13.4
+
+# Carga segura de GROQ_API_KEY y TAVILY_API_KEY desde el archivo .env.
+python-dotenv==1.2.2
+
+# Cliente para realizar búsquedas y extracciones con Tavily.
+tavily-python==0.7.27
+
+# Framework utilizado para las pruebas automatizadas.
+pytest==9.1.1

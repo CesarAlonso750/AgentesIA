@@ -1,0 +1,1 @@
+"""Herramientas deterministas utilizadas por los agentes."""
