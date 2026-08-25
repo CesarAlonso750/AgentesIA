@@ -9,3 +9,6 @@ __pycache__/
 
 # Evita subir archivos compilados de Python.
 *.pyc
+
+# Evita subir la caché temporal generada por pytest.
+.pytest_cache/
