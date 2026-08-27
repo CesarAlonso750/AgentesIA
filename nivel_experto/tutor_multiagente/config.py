@@ -31,6 +31,14 @@ RUTA_DIRECTORIO_LOGS = DIRECTORIO_PROYECTO / "logs"
 # Modelo que utilizarán los tres agentes en Groq.
 MODELO_GROQ = "openai/gpt-oss-20b"
 
+# Tiempo máximo de espera para una llamada al modelo.
+TIMEOUT_GROQ = 30
+
+# Límite máximo para la salida y el razonamiento del coordinador.
+MAX_TOKENS_COORDINADOR = 1_000
+
+# Número total de intentos permitidos para obtener una decisión válida.
+MAX_INTENTOS_COORDINADOR = 2
 
 # Límites para controlar el consumo y evitar bucles infinitos.
 MAX_RESULTADOS_BUSQUEDA = 5
