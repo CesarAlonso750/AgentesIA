@@ -1,4 +1,3 @@
-from typing import Protocol  # Define el contrato mínimo del cliente de chat.
 from pydantic import ValidationError
 
 from groq import (
@@ -7,8 +6,13 @@ from groq import (
     APITimeoutError,
     AuthenticationError,
     BadRequestError,
-    Groq,
     RateLimitError,
+)
+
+from nivel_experto.tutor_multiagente.agentes.cliente_groq import (
+    ClienteGroq,
+    crear_cliente_groq,
+    obtener_contenido_respuesta,
 )
 
 from nivel_experto.tutor_multiagente.agentes.esquemas import (
@@ -19,7 +23,6 @@ from nivel_experto.tutor_multiagente.config import (
     MAX_TOKENS_COORDINADOR,
     MODELO_GROQ,
     TIMEOUT_GROQ,
-    obtener_variable_entorno,
 )
 from nivel_experto.tutor_multiagente.estado import (
     crear_estado_inicial,
@@ -27,34 +30,6 @@ from nivel_experto.tutor_multiagente.estado import (
 from nivel_experto.tutor_multiagente.herramientas.fuentes import (
     listar_fuentes_oficiales,
 )
-
-class CreadorCompletions(Protocol):
-    """
-    Define el método utilizado para solicitar una respuesta al modelo.
-    """
-
-    def create(self, **parametros: object) -> object:
-        """Crea una respuesta de chat."""
-        ...
-
-
-class RecursoChat(Protocol):
-    """
-    Representa el atributo chat del cliente de Groq.
-    """
-
-    completions: CreadorCompletions
-
-
-class ClienteCoordinador(Protocol):
-    """
-    Define la parte del cliente de Groq que utiliza el coordinador.
-
-    Los tests podrán proporcionar un cliente simulado con esta misma
-    estructura, sin realizar conexiones ni consumir tokens.
-    """
-
-    chat: RecursoChat
 
 # Contiene las instrucciones permanentes del agente coordinador.
 PROMPT_BASE_COORDINADOR = """
@@ -125,16 +100,6 @@ def construir_prompt_coordinador() -> str:
         f"{catalogo_texto}"
     )
 
-def _crear_cliente_groq() -> Groq:
-    """
-    Crea el cliente real utilizando la clave almacenada en el entorno.
-    """
-    # Recupera la clave sin imprimirla ni guardarla en el código fuente.
-    api_key = obtener_variable_entorno("GROQ_API_KEY")
-
-    # Devuelve el cliente oficial configurado.
-    return Groq(api_key=api_key)
-
 def _construir_formato_respuesta() -> dict[str, object]:
     """
     Construye la configuración JSON Schema enviada a Groq.
@@ -159,8 +124,7 @@ def _construir_formato_respuesta() -> dict[str, object]:
         },
     }
 
-
-def _obtener_contenido_respuesta(respuesta: object) -> str:
+def obtener_contenido_respuesta(respuesta: object) -> str:
     """
     Recupera el contenido textual de una respuesta de Groq.
 
@@ -250,7 +214,7 @@ def interpretar_decision_coordinador(
 
 def ejecutar_coordinador(
     entrada_usuario: object,
-    cliente: ClienteCoordinador | None = None,
+    cliente: ClienteGroq | None = None,
 ) -> DecisionCoordinador:
     """
     Solicita al coordinador una decisión estructurada para el turno.
@@ -278,7 +242,7 @@ def ejecutar_coordinador(
     cliente_chat = (
         cliente
         if cliente is not None
-        else _crear_cliente_groq()
+        else crear_cliente_groq()
     )
 
     # Mantiene las instrucciones separadas de la entrada no confiable.
@@ -349,7 +313,7 @@ def ejecutar_coordinador(
             ) from error
 
         # Comprueba que el SDK haya devuelto contenido textual.
-        contenido = _obtener_contenido_respuesta(respuesta)
+        contenido = obtener_contenido_respuesta(respuesta)
 
         try:
             # Aplica tipos, catálogo y reglas de coherencia.
@@ -404,3 +368,41 @@ def ejecutar_coordinador(
     raise RuntimeError(
         "El coordinador terminó sin producir una decisión."
     )
+
+def crear_actualizacion_coordinador(
+    decision: object,
+) -> dict[str, object]:
+    """
+    Convierte una decisión validada en una actualización del estado.
+
+    Args:
+        decision: Decisión producida por el agente coordinador.
+
+    Returns:
+        Campos que deben incorporarse a EstadoTutor.
+
+    Raises:
+        TypeError: Si la decisión no es una instancia validada.
+    """
+    # Solo acepta decisiones que hayan superado la validación de Pydantic.
+    if not isinstance(decision, DecisionCoordinador):
+        raise TypeError(
+            "La actualización requiere una DecisionCoordinador validada."
+        )
+
+    # Una aclaración puede mostrarse directamente como respuesta final.
+    respuesta_final = (
+        decision.mensaje_aclaracion
+        if decision.accion == "pedir_aclaracion"
+        else None
+    )
+
+    # Devuelve únicamente los campos responsabilidad del coordinador.
+    return {
+        "accion": decision.accion,
+        "tecnologia": decision.tecnologia,
+        "consulta_documentacion": decision.consulta_documentacion,
+        "requiere_documentacion": decision.requiere_documentacion,
+        "mensaje_aclaracion": decision.mensaje_aclaracion,
+        "respuesta_final": respuesta_final,
+    }

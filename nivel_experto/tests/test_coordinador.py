@@ -8,10 +8,13 @@ from nivel_experto.tutor_multiagente.agentes import (
     coordinador as modulo_coordinador,
 )
 from nivel_experto.tutor_multiagente.agentes.coordinador import (
-    _obtener_contenido_respuesta,
     construir_prompt_coordinador,
+    crear_actualizacion_coordinador,
     ejecutar_coordinador,
     interpretar_decision_coordinador,
+)
+from nivel_experto.tutor_multiagente.agentes.cliente_groq import (
+    obtener_contenido_respuesta,
 )
 from nivel_experto.tutor_multiagente.agentes.esquemas import (
     DecisionCoordinador,
@@ -327,7 +330,7 @@ def test_obtener_contenido_rechaza_respuesta_sin_alternativas(
         RuntimeError,
         match="sin alternativas",
     ):
-        _obtener_contenido_respuesta(respuesta)
+        obtener_contenido_respuesta(respuesta)
 
 
 def test_obtener_contenido_rechaza_alternativa_sin_mensaje():
@@ -342,7 +345,7 @@ def test_obtener_contenido_rechaza_alternativa_sin_mensaje():
         RuntimeError,
         match="no contiene un mensaje",
     ):
-        _obtener_contenido_respuesta(respuesta)
+        obtener_contenido_respuesta(respuesta)
 
 
 @pytest.mark.parametrize(
@@ -370,9 +373,9 @@ def test_obtener_contenido_rechaza_mensaje_sin_decision(
 
     with pytest.raises(
         RuntimeError,
-        match="no contiene una decisión",
+        match="no contiene contenido válido",
     ):
-        _obtener_contenido_respuesta(respuesta)
+        obtener_contenido_respuesta(respuesta)
 
 
 def test_obtener_contenido_normaliza_espacios_exteriores():
@@ -387,7 +390,7 @@ def test_obtener_contenido_normaliza_espacios_exteriores():
         ]
     )
 
-    resultado = _obtener_contenido_respuesta(respuesta)
+    resultado = obtener_contenido_respuesta(respuesta)
 
     assert resultado == "contenido de prueba"
 
@@ -611,3 +614,67 @@ def test_ejecutar_coordinador_se_detiene_tras_dos_decisiones_invalidas():
 
     # Nunca debe existir un tercer intento.
     assert cliente.completions.numero_llamadas == 2
+
+def test_crear_actualizacion_coordinador_para_consulta():
+    """Comprueba una decisión que todavía necesita ejecutar más pasos."""
+    decision = DecisionCoordinador(
+        accion="responder_consulta",
+        tecnologia="python",
+        consulta_documentacion="listas de Python",
+        requiere_documentacion=True,
+        mensaje_aclaracion=None,
+    )
+
+    actualizacion = crear_actualizacion_coordinador(decision)
+
+    assert actualizacion == {
+        "accion": "responder_consulta",
+        "tecnologia": "python",
+        "consulta_documentacion": "listas de Python",
+        "requiere_documentacion": True,
+        "mensaje_aclaracion": None,
+        "respuesta_final": None,
+    }
+
+
+def test_crear_actualizacion_coordinador_para_aclaracion():
+    """Comprueba que una aclaración se convierta en respuesta final."""
+    decision = DecisionCoordinador(
+        accion="pedir_aclaracion",
+        tecnologia=None,
+        consulta_documentacion=None,
+        requiere_documentacion=False,
+        mensaje_aclaracion="¿Qué tecnología quieres estudiar?",
+    )
+
+    actualizacion = crear_actualizacion_coordinador(decision)
+
+    assert actualizacion == {
+        "accion": "pedir_aclaracion",
+        "tecnologia": None,
+        "consulta_documentacion": None,
+        "requiere_documentacion": False,
+        "mensaje_aclaracion": "¿Qué tecnología quieres estudiar?",
+        "respuesta_final": "¿Qué tecnología quieres estudiar?",
+    }
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        None,
+        {
+            "accion": "responder_consulta",
+        },
+        "decisión sin validar",
+    ],
+)
+def test_crear_actualizacion_coordinador_rechaza_decision_no_validada(
+    decision,
+):
+    """Comprueba que no se admitan datos que no hayan pasado Pydantic."""
+    with pytest.raises(
+        TypeError,
+        match="DecisionCoordinador validada",
+    ):
+        crear_actualizacion_coordinador(decision)

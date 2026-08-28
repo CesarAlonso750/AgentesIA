@@ -40,6 +40,20 @@ MAX_TOKENS_COORDINADOR = 1_000
 # Número total de intentos permitidos para obtener una decisión válida.
 MAX_INTENTOS_COORDINADOR = 2
 
+# Máximo de tokens para seleccionar resultados de búsqueda.
+MAX_TOKENS_SELECCION = 1_000
+
+# Número total de intentos para obtener una selección válida.
+MAX_INTENTOS_SELECCION = 2
+
+# Tokens máximos para redactar una explicación o ejercicio completo.
+# El borrador necesita más espacio que una decisión o selección breve.
+MAX_TOKENS_BORRADOR = 4_000
+
+# Permite una llamada inicial y una única corrección del borrador.
+# Evita ciclos indefinidos y controla el consumo de tokens.
+MAX_INTENTOS_BORRADOR = 2
+
 # Límites para controlar el consumo y evitar bucles infinitos.
 MAX_RESULTADOS_BUSQUEDA = 5
 MAX_BUSQUEDAS_POR_TURNO = 3
