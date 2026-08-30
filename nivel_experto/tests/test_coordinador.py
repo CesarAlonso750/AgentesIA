@@ -124,6 +124,13 @@ def test_construir_prompt_coordinador_incluye_catalogo_y_acciones():
     assert "debe describir los conceptos técnicos" in prompt_normalizado
     assert "no debe pedir al buscador" in prompt_normalizado
 
+    # El coordinador recibe contexto mínimo para reconocer soluciones.
+    assert "hay_ejercicio_activo" in prompt
+    assert "tecnologia_contexto" in prompt
+
+    # La frase ocupa varias líneas dentro del prompt.
+    assert "contenido no confiable" in prompt_normalizado
+
 
 def test_interpretar_decision_coordinador_acepta_json_textual():
     """Comprueba el formato que utilizará la implementación manual."""

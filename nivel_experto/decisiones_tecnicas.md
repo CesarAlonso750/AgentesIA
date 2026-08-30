@@ -264,3 +264,180 @@ suficientes.
 Por este motivo, el tercer agente revisará durante la siguiente fase la
 fidelidad semántica del borrador respecto a las fuentes antes de generar la
 respuesta final.
+
+## DT-004: evaluador independiente y ciclo limitado de corrección
+
+**Fecha:** 30 de agosto de 2026
+
+### Contexto
+
+Los esquemas y validadores permiten comprobar la estructura de un borrador,
+pero no garantizan que sus afirmaciones estén respaldadas por las fuentes
+oficiales. Además, los ejercicios necesitan evaluar posteriormente la
+respuesta del estudiante sin revelar la solución privada.
+
+### Opciones consideradas
+
+1. Mostrar directamente todos los borradores del tutor-investigador.
+2. Pedir al propio redactor que revise su respuesta.
+3. Utilizar un evaluador independiente con una única tarea.
+4. Utilizar un evaluador independiente con dos tareas relacionadas.
+5. Crear dos agentes evaluadores distintos.
+
+### Decisión
+
+Se utilizará un tercer agente evaluador independiente con dos tareas:
+
+1. Revisar un borrador antes de mostrarlo.
+2. Evaluar la respuesta del estudiante mediante la rúbrica privada.
+
+Cada tarea utiliza un prompt y un esquema Pydantic diferente:
+`RevisionBorrador` y `EvaluacionEjercicio`.
+
+La revisión no permite al evaluador reescribir el borrador. Si detecta un
+problema material, devuelve instrucciones al tutor-investigador. Solo se
+permite una corrección y una segunda revisión.
+
+La evaluación del estudiante clasifica todos los identificadores de la
+rúbrica exactamente una vez como cumplidos o pendientes. El modelo no puede
+inventar, omitir ni duplicar criterios.
+
+### Seguridad y límites
+
+- El evaluador utiliza únicamente las fuentes entregadas.
+- No se ejecuta el código escrito por el estudiante.
+- Una respuesta alternativa puede aceptarse si satisface la rúbrica.
+- La solución esperada permanece privada.
+- La retroalimentación no debe revelar la solución completa.
+- Una aprobación no puede contener problemas pendientes.
+- Una respuesta correcta debe obtener al menos 7 puntos.
+- Una respuesta incorrecta no puede obtener 10 puntos.
+- Cada llamada estructurada permite como máximo dos intentos.
+- El ciclo de borrador permite dos revisiones y una corrección.
+
+### Consecuencias positivas
+
+- El contenido se revisa antes de mostrarse.
+- Redactor y evaluador tienen responsabilidades separadas.
+- Las evaluaciones pueden comprobarse objetivamente mediante criterios.
+- Los ciclos están limitados y no pueden continuar indefinidamente.
+- Todos los componentes pueden probarse con clientes simulados.
+
+### Consecuencias negativas
+
+- Cada revisión consume una llamada adicional al modelo.
+- Una corrección puede necesitar dos llamadas más.
+- La valoración semántica continúa dependiendo parcialmente del modelo.
+- Un evaluador demasiado estricto puede rechazar contenido válido.
+
+### Evidencia inicial
+
+Una prueba real detectó correctamente que la expresión «append añade el
+objeto como una referencia completa» no estaba respaldada por el fragmento
+oficial proporcionado.
+
+Después de ajustar el prompt, el evaluador dejó de exigir elementos
+opcionales como encabezados, ejemplos, URL o citas literales cuando la
+petición no los requería.
+
+
+## DT-005: orquestación manual, progreso local y logging seguro
+
+**Fecha:** 30 de agosto de 2026
+
+### Contexto
+
+Antes de construir la versión con LangGraph se necesita una implementación
+manual que muestre explícitamente cómo pasan los datos entre coordinador,
+herramientas, tutor-investigador y evaluador.
+
+También es necesario guardar el progreso y registrar eventos técnicos sin
+publicar datos personales o información privada.
+
+### Decisión de orquestación
+
+La implementación manual utiliza funciones Python explícitas y un
+`EstadoTutor` compartido.
+
+El flujo principal es:
+
+`entrada → coordinador → ruta seleccionada → respuesta final`
+
+Las rutas posibles son:
+
+- `pedir_aclaracion`: termina sin utilizar herramientas.
+- `responder_consulta`: investiga, redacta y revisa una explicación.
+- `generar_ejercicio`: investiga, redacta y revisa un ejercicio.
+- `evaluar_respuesta`: reutiliza ejercicio, rúbrica y fuentes anteriores.
+
+El coordinador recibe un JSON mínimo con la entrada actual, la existencia de
+un ejercicio activo, la tecnología de contexto y el número de mensajes
+anteriores. No recibe la solución privada, las fuentes completas ni el
+historial textual.
+
+### Persistencia del progreso
+
+El progreso se guarda localmente en un JSON versionado. Cada intento incluye:
+
+- Fecha UTC.
+- Tecnología.
+- Título del ejercicio.
+- Puntuación.
+- Resultado correcto o incorrecto.
+- Identificadores de criterios cumplidos y pendientes.
+
+No se guardan la respuesta del estudiante, la solución esperada ni el
+contenido de las fuentes.
+
+La escritura es atómica: primero se genera un archivo temporal en el mismo
+directorio y después se reemplaza el historial definitivo. Si el guardado
+falla, la evaluación continúa mostrándose y el estado registra el error.
+
+### Logging
+
+Se utiliza el módulo estándar `logging` con:
+
+- Salida de consola.
+- Archivo rotativo de 1 MB.
+- Tres copias anteriores.
+- Eventos JSON estructurados.
+- Lista cerrada de nombres y campos permitidos.
+
+No se registran claves, prompts, respuestas del estudiante, soluciones,
+contenido de fuentes ni mensajes internos de excepciones.
+
+### Tratamiento de límites externos
+
+Los reintentos automáticos del SDK de Groq se desactivan con
+`max_retries=0`. Los agentes mantienen sus propios reintentos limitados para
+errores de estructura, pero un límite HTTP 429 se comunica rápidamente como
+un error controlado.
+
+La terminal también captura `KeyboardInterrupt` durante una llamada externa
+para cerrar sin mostrar un traceback.
+
+### Consecuencias positivas
+
+- El flujo completo puede seguirse paso a paso.
+- Cada ruta puede probarse sin APIs mediante inyección de dependencias.
+- El estado conserva el ejercicio necesario entre turnos.
+- El progreso personal no se publica en Git.
+- Los logs permiten observar el flujo sin almacenar contenido sensible.
+- La implementación servirá como referencia para comparar con LangGraph.
+
+### Consecuencias negativas
+
+- La orquestación manual requiere más código propio.
+- Las firmas contienen varios clientes opcionales para facilitar las pruebas.
+- El progreso local no gestiona todavía múltiples estudiantes.
+- Un límite temporal de una API obliga al usuario a reintentar más tarde.
+
+### Evidencia inicial
+
+La suite alcanzó 565 pruebas superadas.
+
+La primera ejecución real recorrió coordinador, búsqueda, selección,
+extracción, redacción y primera revisión. El evaluador solicitó una
+corrección, pero Groq devolvió HTTP 429 durante esa llamada. El flujo previo
+funcionó correctamente y el límite externo permitió detectar la necesidad de
+desactivar los reintentos internos del SDK y controlar `Ctrl+C`.

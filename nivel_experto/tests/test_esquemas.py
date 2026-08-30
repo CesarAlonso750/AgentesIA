@@ -5,6 +5,8 @@ from pydantic import ValidationError  # Error generado por modelos inválidos.
 from nivel_experto.tutor_multiagente.agentes.esquemas import (
     BorradorTutor,
     DecisionCoordinador,
+    EvaluacionEjercicio,
+    RevisionBorrador,
     SeleccionFuentes,
 )
 
@@ -616,4 +618,611 @@ def test_borrador_rechaza_cita_no_declarada():
             fuentes_utilizadas=["fuente-1"],
             solucion_esperada=None,
             criterios_evaluacion=[],
+        )
+
+def test_revision_borrador_acepta_aprobacion_coherente():
+    """
+    Comprueba una revisión aprobada y normaliza sus textos.
+    """
+    revision = RevisionBorrador(
+        aprobado=True,
+        fuentes_comprobadas=[" fuente-1 "],
+        problemas_detectados=[],
+        instrucciones_revision=None,
+        resumen_revision=(
+            " Las afirmaciones están respaldadas por la fuente. "
+        ),
+    )
+
+    assert revision.aprobado is True
+    assert revision.fuentes_comprobadas == ["fuente-1"]
+    assert revision.problemas_detectados == []
+    assert revision.instrucciones_revision is None
+    assert revision.resumen_revision == (
+        "Las afirmaciones están respaldadas por la fuente."
+    )
+
+
+def test_revision_borrador_acepta_rechazo_coherente():
+    """
+    Comprueba una revisión rechazada con instrucciones concretas.
+    """
+    revision = RevisionBorrador(
+        aprobado=False,
+        fuentes_comprobadas=["fuente-1"],
+        problemas_detectados=[
+            "Una afirmación no está respaldada.",
+        ],
+        instrucciones_revision=(
+            "Elimina la afirmación o justifícala con la fuente."
+        ),
+        resumen_revision=(
+            "El borrador necesita una corrección antes de publicarse."
+        ),
+    )
+
+    assert revision.aprobado is False
+    assert revision.problemas_detectados == [
+        "Una afirmación no está respaldada.",
+    ]
+    assert revision.instrucciones_revision == (
+        "Elimina la afirmación o justifícala con la fuente."
+    )
+
+
+def test_revision_borrador_rechaza_campos_adicionales():
+    """
+    Impide que el evaluador añada propiedades fuera del contrato.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="Extra inputs are not permitted",
+    ):
+        RevisionBorrador(
+            aprobado=True,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=[],
+            instrucciones_revision=None,
+            resumen_revision="El borrador es correcto.",
+
+            # Este campo no pertenece al esquema.
+            confianza=0.95,
+        )
+
+
+@pytest.mark.parametrize(
+    "identificador_invalido",
+    [
+        "resultado-1",
+        "fuente-0",
+        "fuente-x",
+        "https://docs.python.org/3/",
+    ],
+)
+def test_revision_borrador_rechaza_identificador_invalido(
+    identificador_invalido,
+):
+    """
+    Comprueba el formato de las fuentes verificadas.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="formato 'fuente-N'",
+    ):
+        RevisionBorrador(
+            aprobado=True,
+            fuentes_comprobadas=[
+                identificador_invalido,
+            ],
+            problemas_detectados=[],
+            instrucciones_revision=None,
+            resumen_revision="El borrador es correcto.",
+        )
+
+
+def test_revision_borrador_rechaza_fuentes_duplicadas():
+    """
+    Evita representar dos veces la misma comprobación.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="dos veces la misma fuente",
+    ):
+        RevisionBorrador(
+            aprobado=True,
+            fuentes_comprobadas=[
+                "fuente-1",
+                " fuente-1 ",
+            ],
+            problemas_detectados=[],
+            instrucciones_revision=None,
+            resumen_revision="El borrador es correcto.",
+        )
+
+
+@pytest.mark.parametrize(
+    "problemas_invalidos",
+    [
+        ["   "],
+        [
+            "Afirmación no respaldada.",
+            "Afirmación no respaldada.",
+        ],
+    ],
+)
+def test_revision_borrador_rechaza_problemas_invalidos(
+    problemas_invalidos,
+):
+    """
+    Rechaza problemas vacíos o repetidos.
+    """
+    with pytest.raises(ValidationError):
+        RevisionBorrador(
+            aprobado=False,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=problemas_invalidos,
+            instrucciones_revision=(
+                "Corrige las afirmaciones señaladas."
+            ),
+            resumen_revision=(
+                "El borrador necesita modificaciones."
+            ),
+        )
+
+
+def test_revision_aprobada_rechaza_problemas():
+    """
+    Un contenido aprobado no puede declarar errores pendientes.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="aprobada no debe contener problemas",
+    ):
+        RevisionBorrador(
+            aprobado=True,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=[
+                "Existe un problema pendiente.",
+            ],
+            instrucciones_revision=None,
+            resumen_revision=(
+                "La decisión y los problemas se contradicen."
+            ),
+        )
+
+
+def test_revision_aprobada_rechaza_instrucciones():
+    """
+    Un contenido aprobado no debe pedir otra corrección.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="aprobada no necesita instrucciones",
+    ):
+        RevisionBorrador(
+            aprobado=True,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=[],
+            instrucciones_revision=(
+                "Modifica el contenido."
+            ),
+            resumen_revision=(
+                "La decisión y las instrucciones se contradicen."
+            ),
+        )
+
+
+def test_revision_rechazada_exige_problemas():
+    """
+    Un rechazo debe identificar al menos un problema.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="rechazada debe indicar problemas",
+    ):
+        RevisionBorrador(
+            aprobado=False,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=[],
+            instrucciones_revision=(
+                "Modifica el contenido."
+            ),
+            resumen_revision=(
+                "El borrador necesita cambios."
+            ),
+        )
+
+
+def test_revision_rechazada_exige_instrucciones():
+    """
+    Un rechazo debe indicar al redactor cómo corregir el borrador.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="rechazada requiere instrucciones",
+    ):
+        RevisionBorrador(
+            aprobado=False,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=[
+                "Una afirmación no está respaldada.",
+            ],
+            instrucciones_revision=None,
+            resumen_revision=(
+                "El borrador necesita cambios."
+            ),
+        )
+
+
+def test_revision_rechaza_instrucciones_vacias():
+    """
+    Una cadena de espacios no constituye una instrucción útil.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="no pueden estar vacías",
+    ):
+        RevisionBorrador(
+            aprobado=False,
+            fuentes_comprobadas=["fuente-1"],
+            problemas_detectados=[
+                "Una afirmación no está respaldada.",
+            ],
+            instrucciones_revision="   ",
+            resumen_revision=(
+                "El borrador necesita cambios."
+            ),
+        )
+
+
+def test_revision_exige_alguna_fuente_comprobada():
+    """
+    El evaluador no puede aprobar o rechazar sin revisar fuentes.
+    """
+    with pytest.raises(ValidationError):
+        RevisionBorrador(
+            aprobado=True,
+            fuentes_comprobadas=[],
+            problemas_detectados=[],
+            instrucciones_revision=None,
+            resumen_revision="El borrador es correcto.",
+        )
+
+def test_evaluacion_ejercicio_acepta_respuesta_correcta():
+    """
+    Comprueba una respuesta que satisface toda la rúbrica.
+    """
+    evaluacion = EvaluacionEjercicio(
+        respuesta_correcta=True,
+        puntuacion=9,
+        criterios_cumplidos=[
+            " criterio-1 ",
+            "criterio-2",
+        ],
+        criterios_pendientes=[],
+        retroalimentacion_markdown=(
+            "La solución cumple los requisitos y utiliza "
+            "correctamente las operaciones solicitadas."
+        ),
+        recomendacion_siguiente=(
+            "Prueba ahora una variante con más elementos."
+        ),
+    )
+
+    assert evaluacion.respuesta_correcta is True
+    assert evaluacion.puntuacion == 9
+    assert evaluacion.criterios_cumplidos == [
+        "criterio-1",
+        "criterio-2",
+    ]
+    assert evaluacion.criterios_pendientes == []
+
+
+def test_evaluacion_ejercicio_acepta_respuesta_incompleta():
+    """
+    Comprueba una evaluación con aciertos y requisitos pendientes.
+    """
+    evaluacion = EvaluacionEjercicio(
+        respuesta_correcta=False,
+        puntuacion=6,
+        criterios_cumplidos=["criterio-1"],
+        criterios_pendientes=["criterio-2"],
+        retroalimentacion_markdown=(
+            "Has creado correctamente la lista, pero todavía "
+            "debes utilizar el método solicitado."
+        ),
+        recomendacion_siguiente=(
+            "Revisa cómo funciona el método append."
+        ),
+    )
+
+    assert evaluacion.respuesta_correcta is False
+    assert evaluacion.puntuacion == 6
+    assert evaluacion.criterios_cumplidos == ["criterio-1"]
+    assert evaluacion.criterios_pendientes == ["criterio-2"]
+
+
+def test_evaluacion_ejercicio_rechaza_campos_adicionales():
+    """
+    Impide que el evaluador añada propiedades no definidas.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="Extra inputs are not permitted",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=True,
+            puntuacion=10,
+            criterios_cumplidos=["criterio-1"],
+            criterios_pendientes=[],
+            retroalimentacion_markdown=(
+                "La respuesta cumple completamente el ejercicio."
+            ),
+            recomendacion_siguiente=None,
+
+            # Este campo no pertenece al contrato.
+            nivel_estimado="avanzado",
+        )
+
+
+@pytest.mark.parametrize(
+    "puntuacion_invalida",
+    [
+        -1,
+        11,
+    ],
+)
+def test_evaluacion_ejercicio_limita_puntuacion(
+    puntuacion_invalida,
+):
+    """
+    Comprueba que la puntuación permanezca entre cero y diez.
+    """
+    with pytest.raises(ValidationError):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=puntuacion_invalida,
+            criterios_cumplidos=[],
+            criterios_pendientes=["criterio-1"],
+            retroalimentacion_markdown=(
+                "La respuesta todavía necesita algunas correcciones."
+            ),
+            recomendacion_siguiente=(
+                "Revisa el enunciado del ejercicio."
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "puntuacion_invalida",
+    [
+        True,
+        7.5,
+        "8",
+    ],
+)
+def test_evaluacion_ejercicio_exige_puntuacion_entera(
+    puntuacion_invalida,
+):
+    """
+    Evita conversiones automáticas de booleanos, decimales o textos.
+    """
+    with pytest.raises(ValidationError):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=puntuacion_invalida,
+            criterios_cumplidos=[],
+            criterios_pendientes=["criterio-1"],
+            retroalimentacion_markdown=(
+                "La respuesta todavía necesita algunas correcciones."
+            ),
+            recomendacion_siguiente=(
+                "Revisa el enunciado del ejercicio."
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "criterio_invalido",
+    [
+        "resultado-1",
+        "criterio-0",
+        "criterio-6",
+        "criterio-x",
+    ],
+)
+def test_evaluacion_ejercicio_rechaza_criterio_invalido(
+    criterio_invalido,
+):
+    """
+    Comprueba el formato y el intervalo de los IDs de criterio.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="formato 'criterio-N'",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=5,
+            criterios_cumplidos=[],
+            criterios_pendientes=[
+                criterio_invalido,
+            ],
+            retroalimentacion_markdown=(
+                "La respuesta todavía necesita algunas correcciones."
+            ),
+            recomendacion_siguiente=(
+                "Revisa los criterios del ejercicio."
+            ),
+        )
+
+
+def test_evaluacion_ejercicio_rechaza_criterio_duplicado():
+    """
+    Impide representar dos veces el mismo criterio.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="dos veces el mismo criterio",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=True,
+            puntuacion=9,
+            criterios_cumplidos=[
+                "criterio-1",
+                " criterio-1 ",
+            ],
+            criterios_pendientes=[],
+            retroalimentacion_markdown=(
+                "La respuesta cumple completamente el ejercicio."
+            ),
+            recomendacion_siguiente=None,
+        )
+
+
+def test_evaluacion_ejercicio_rechaza_criterio_solapado():
+    """
+    Un criterio no puede estar cumplido y pendiente a la vez.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="cumplido y pendiente",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=5,
+            criterios_cumplidos=["criterio-1"],
+            criterios_pendientes=["criterio-1"],
+            retroalimentacion_markdown=(
+                "La evaluación contiene una clasificación contradictoria."
+            ),
+            recomendacion_siguiente=(
+                "Revisa el criterio indicado."
+            ),
+        )
+
+
+def test_evaluacion_ejercicio_exige_algun_criterio():
+    """
+    Toda evaluación debe pronunciarse sobre la rúbrica.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="debe incluir algún criterio",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=True,
+            puntuacion=9,
+            criterios_cumplidos=[],
+            criterios_pendientes=[],
+            retroalimentacion_markdown=(
+                "La evaluación no ha utilizado ningún criterio."
+            ),
+            recomendacion_siguiente=None,
+        )
+
+
+def test_evaluacion_correcta_rechaza_criterios_pendientes():
+    """
+    Una respuesta correcta debe satisfacer todos los criterios.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="correcta no debe tener criterios pendientes",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=True,
+            puntuacion=8,
+            criterios_cumplidos=["criterio-1"],
+            criterios_pendientes=["criterio-2"],
+            retroalimentacion_markdown=(
+                "La evaluación contiene una decisión contradictoria."
+            ),
+            recomendacion_siguiente=(
+                "Completa el requisito pendiente."
+            ),
+        )
+
+
+def test_evaluacion_correcta_rechaza_nota_insuficiente():
+    """
+    Una respuesta aprobada no puede recibir una puntuación inferior a siete.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="al menos 7 puntos",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=True,
+            puntuacion=6,
+            criterios_cumplidos=["criterio-1"],
+            criterios_pendientes=[],
+            retroalimentacion_markdown=(
+                "La decisión no coincide con la puntuación indicada."
+            ),
+            recomendacion_siguiente=None,
+        )
+
+
+def test_evaluacion_incorrecta_exige_criterios_pendientes():
+    """
+    Una respuesta incorrecta debe explicar qué requisito falta.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="incorrecta debe indicar criterios pendientes",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=6,
+            criterios_cumplidos=["criterio-1"],
+            criterios_pendientes=[],
+            retroalimentacion_markdown=(
+                "La decisión no identifica ningún requisito pendiente."
+            ),
+            recomendacion_siguiente=(
+                "Revisa nuevamente la solución."
+            ),
+        )
+
+
+def test_evaluacion_incorrecta_rechaza_nota_perfecta():
+    """
+    Una respuesta incorrecta no puede obtener diez puntos.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="incorrecta no puede obtener 10 puntos",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=10,
+            criterios_cumplidos=["criterio-1"],
+            criterios_pendientes=["criterio-2"],
+            retroalimentacion_markdown=(
+                "La decisión no coincide con la puntuación perfecta."
+            ),
+            recomendacion_siguiente=(
+                "Completa el requisito pendiente."
+            ),
+        )
+
+
+def test_evaluacion_rechaza_recomendacion_vacia():
+    """
+    Una recomendación textual debe contener información útil.
+    """
+    with pytest.raises(
+        ValidationError,
+        match="no puede estar vacía",
+    ):
+        EvaluacionEjercicio(
+            respuesta_correcta=False,
+            puntuacion=5,
+            criterios_cumplidos=[],
+            criterios_pendientes=["criterio-1"],
+            retroalimentacion_markdown=(
+                "La respuesta todavía necesita algunas correcciones."
+            ),
+            recomendacion_siguiente="   ",
         )

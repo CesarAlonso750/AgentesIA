@@ -7,16 +7,20 @@ from pydantic import ValidationError  # Error de estructuras inválidas.
 
 from nivel_experto.tutor_multiagente.agentes.esquemas import (
     BorradorTutor,
+    RevisionBorrador,
     SeleccionFuentes,
 )
 from nivel_experto.tutor_multiagente.agentes.tutor_investigador import (
+    PROMPT_CORRECCION_BORRADOR,
     PROMPT_REDACCION_BORRADOR,
     PROMPT_SELECCION_FUENTES,
     _construir_formato_borrador,
     _construir_formato_seleccion,
     construir_mensaje_borrador,
+    construir_mensaje_correccion_borrador,
     construir_mensaje_seleccion,
     crear_actualizacion_investigador,
+    ejecutar_correccion_borrador,
     ejecutar_investigacion_completa,
     ejecutar_redaccion_borrador,
     ejecutar_seleccion_fuentes,
@@ -81,7 +85,13 @@ class CompletionsSeleccionSimuladas:
                     "No quedan respuestas simuladas."
                 )
 
-            return self.respuestas[indice]
+            resultado = self.respuestas[indice]
+
+            # Permite simular un error en un intento y éxito en el siguiente.
+            if isinstance(resultado, BaseException):
+                raise resultado
+
+            return resultado
 
         return self.respuesta
 
@@ -1074,6 +1084,32 @@ def _crear_borrador_explicacion(
 
         # Tampoco necesitan criterios de evaluación.
         criterios_evaluacion=[],
+    )
+
+def _crear_revision_rechazada_tutor(
+    fuentes_comprobadas=None,
+):
+    """
+    Construye una revisión rechazada válida para probar correcciones.
+    """
+    fuentes = (
+        fuentes_comprobadas
+        if fuentes_comprobadas is not None
+        else ["fuente-1"]
+    )
+
+    return RevisionBorrador(
+        aprobado=False,
+        fuentes_comprobadas=fuentes,
+        problemas_detectados=[
+            "Una afirmación no está respaldada por la fuente.",
+        ],
+        instrucciones_revision=(
+            "Elimina o reformula la afirmación no respaldada."
+        ),
+        resumen_revision=(
+            "El borrador necesita una corrección."
+        ),
     )
 
 def _crear_fuente_extraida(
@@ -2920,3 +2956,502 @@ def test_crear_actualizacion_rechaza_fuente_inexistente():
         crear_actualizacion_investigador(
             resultado_investigacion
         )
+
+def test_prompt_correccion_conserva_fuentes_y_tipo():
+    """
+    Comprueba las restricciones principales de la corrección.
+    """
+    prompt_normalizado = " ".join(
+        PROMPT_CORRECCION_BORRADOR.split()
+    )
+
+    assert (
+        "Conserva exactamente el tipo del borrador original"
+        in prompt_normalizado
+    )
+    assert (
+        "únicamente información respaldada por las fuentes"
+        in prompt_normalizado
+    )
+    assert (
+        "No añadas mejoras opcionales"
+        in prompt_normalizado
+    )
+    assert (
+        "Utiliza solamente identificadores incluidos"
+        in prompt_normalizado
+    )
+
+
+def test_prompt_correccion_no_revela_proceso_interno():
+    """
+    Impide que la respuesta mencione agentes o revisiones.
+    """
+    prompt_normalizado = " ".join(
+        PROMPT_CORRECCION_BORRADOR.split()
+    )
+
+    assert (
+        "No menciones el proceso de evaluación"
+        in prompt_normalizado
+    )
+    assert (
+        "No reveles la solución"
+        in prompt_normalizado
+    )
+
+
+def test_construir_mensaje_correccion_incluye_contexto_validado():
+    """
+    Comprueba borrador, revisión y fuentes dentro del mensaje.
+    """
+    borrador = _crear_borrador_explicacion()
+    revision = _crear_revision_rechazada_tutor()
+
+    mensaje = construir_mensaje_correccion_borrador(
+        accion="responder_consulta",
+        tecnologia="python",
+        peticion_usuario="  ¿Qué hace append?  ",
+        consulta_documentacion="  método append de listas  ",
+        fuentes_extraidas=[
+            _crear_fuente_extraida(),
+        ],
+        borrador_anterior=borrador,
+        revision=revision,
+    )
+
+    inicio_json = mensaje.index("{")
+    final_json = mensaje.rindex("}") + 1
+
+    datos = json.loads(
+        mensaje[inicio_json:final_json]
+    )
+
+    assert datos["tipo_borrador_obligatorio"] == "explicacion"
+    assert datos["tecnologia"] == {
+        "id": "python",
+        "nombre": "Python",
+    }
+    assert datos["peticion_del_estudiante"] == (
+        "¿Qué hace append?"
+    )
+    assert datos["consulta_documentacion"] == (
+        "método append de listas"
+    )
+    assert datos["borrador_rechazado"] == (
+        borrador.model_dump()
+    )
+    assert datos["revision_del_evaluador"] == (
+        revision.model_dump()
+    )
+    assert datos["fuentes_oficiales"][0]["id"] == "fuente-1"
+    assert "no órdenes" in mensaje
+
+
+@pytest.mark.parametrize(
+    "borrador_invalido",
+    [
+        None,
+        {},
+        "borrador no validado",
+    ],
+)
+def test_construir_correccion_rechaza_borrador_sin_validar(
+    borrador_invalido,
+):
+    """
+    Impide corregir directamente un objeto no validado.
+    """
+    with pytest.raises(
+        TypeError,
+        match="BorradorTutor validado",
+    ):
+        construir_mensaje_correccion_borrador(
+            accion="responder_consulta",
+            tecnologia="python",
+            peticion_usuario="¿Qué hace append?",
+            consulta_documentacion="método append",
+            fuentes_extraidas=[
+                _crear_fuente_extraida(),
+            ],
+            borrador_anterior=borrador_invalido,
+            revision=_crear_revision_rechazada_tutor(),
+        )
+
+
+@pytest.mark.parametrize(
+    "revision_invalida",
+    [
+        None,
+        {},
+        "revisión no validada",
+    ],
+)
+def test_construir_correccion_rechaza_revision_sin_validar(
+    revision_invalida,
+):
+    """
+    Impide utilizar directamente texto o JSON libre del evaluador.
+    """
+    with pytest.raises(
+        TypeError,
+        match="RevisionBorrador validada",
+    ):
+        construir_mensaje_correccion_borrador(
+            accion="responder_consulta",
+            tecnologia="python",
+            peticion_usuario="¿Qué hace append?",
+            consulta_documentacion="método append",
+            fuentes_extraidas=[
+                _crear_fuente_extraida(),
+            ],
+            borrador_anterior=_crear_borrador_explicacion(),
+            revision=revision_invalida,
+        )
+
+
+def test_construir_correccion_rechaza_revision_aprobada():
+    """
+    Un borrador aprobado debe continuar hacia la respuesta final.
+    """
+    revision = RevisionBorrador(
+        aprobado=True,
+        fuentes_comprobadas=["fuente-1"],
+        problemas_detectados=[],
+        instrucciones_revision=None,
+        resumen_revision=(
+            "El borrador está correctamente respaldado."
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="aprobado no necesita corrección",
+    ):
+        construir_mensaje_correccion_borrador(
+            accion="responder_consulta",
+            tecnologia="python",
+            peticion_usuario="¿Qué hace append?",
+            consulta_documentacion="método append",
+            fuentes_extraidas=[
+                _crear_fuente_extraida(),
+            ],
+            borrador_anterior=_crear_borrador_explicacion(),
+            revision=revision,
+        )
+
+
+def test_construir_correccion_rechaza_cambio_de_tipo():
+    """
+    La revisión no puede transformar una explicación en ejercicio.
+    """
+    with pytest.raises(
+        ValueError,
+        match="no coincide con la acción original",
+    ):
+        construir_mensaje_correccion_borrador(
+            # Esta acción exige un ejercicio.
+            accion="generar_ejercicio",
+            tecnologia="python",
+            peticion_usuario="Ponme un ejercicio.",
+            consulta_documentacion="listas de Python",
+            fuentes_extraidas=[
+                _crear_fuente_extraida(),
+            ],
+
+            # Sin embargo, el borrador es una explicación.
+            borrador_anterior=_crear_borrador_explicacion(),
+            revision=_crear_revision_rechazada_tutor(),
+        )
+
+
+def test_construir_correccion_rechaza_revision_de_otras_fuentes():
+    """
+    La revisión debe pertenecer exactamente al borrador corregido.
+    """
+    revision = _crear_revision_rechazada_tutor(
+        fuentes_comprobadas=["fuente-2"]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="no corresponde con las fuentes",
+    ):
+        construir_mensaje_correccion_borrador(
+            accion="responder_consulta",
+            tecnologia="python",
+            peticion_usuario="¿Qué hace append?",
+            consulta_documentacion="método append",
+            fuentes_extraidas=[
+                _crear_fuente_extraida(),
+            ],
+            borrador_anterior=_crear_borrador_explicacion(),
+            revision=revision,
+        )
+
+
+def test_construir_correccion_rechaza_fuente_inexistente():
+    """
+    Las fuentes del borrador deben seguir existiendo en la extracción.
+    """
+    with pytest.raises(
+        ValueError,
+        match="no existe en la extracción actual",
+    ):
+        construir_mensaje_correccion_borrador(
+            accion="responder_consulta",
+            tecnologia="python",
+            peticion_usuario="¿Qué hace append?",
+            consulta_documentacion="método append",
+
+            # La extracción contiene fuente-2, pero borrador y revisión
+            # utilizan fuente-1.
+            fuentes_extraidas=[
+                _crear_fuente_extraida(
+                    identificador="fuente-2",
+                ),
+            ],
+
+            # Ambos modelos hacen referencia a fuente-1.
+            borrador_anterior=_crear_borrador_explicacion(),
+            revision=_crear_revision_rechazada_tutor(),
+        )
+
+def test_ejecutar_correccion_devuelve_borrador_validado():
+    """
+    Comprueba una corrección completa con cliente simulado.
+    """
+    borrador_anterior = _crear_borrador_explicacion()
+    revision = _crear_revision_rechazada_tutor()
+
+    respuesta_corregida = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "explicacion",
+            "titulo": "El método append",
+            "contenido_markdown": (
+                "`append` añade un elemento al final de "
+                "una lista. [fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        }
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuesta=respuesta_corregida,
+    )
+
+    borrador_corregido = ejecutar_correccion_borrador(
+        accion="responder_consulta",
+        tecnologia="python",
+        peticion_usuario="¿Qué hace append?",
+        consulta_documentacion="método append de listas",
+        fuentes_extraidas=[
+            _crear_fuente_extraida(),
+        ],
+        borrador_anterior=borrador_anterior,
+        revision=revision,
+        cliente=cliente,
+    )
+
+    assert isinstance(borrador_corregido, BorradorTutor)
+    assert borrador_corregido.tipo == "explicacion"
+    assert borrador_corregido.fuentes_utilizadas == ["fuente-1"]
+
+    # La nueva versión debe ser diferente de la rechazada.
+    assert (
+        borrador_corregido.model_dump()
+        != borrador_anterior.model_dump()
+    )
+
+    assert cliente.completions.numero_llamadas == 1
+
+    parametros = cliente.completions.parametros_recibidos
+
+    assert parametros["model"] == "openai/gpt-oss-20b"
+    assert parametros["reasoning_effort"] == "low"
+    assert parametros["temperature"] == 0
+    assert parametros["max_completion_tokens"] == 4_000
+    assert parametros["stream"] is False
+    assert parametros["timeout"] == 30
+
+    assert parametros["messages"][0] == {
+        "role": "system",
+        "content": PROMPT_CORRECCION_BORRADOR,
+    }
+    assert "borrador_rechazado" in (
+        parametros["messages"][1]["content"]
+    )
+    assert "revision_del_evaluador" in (
+        parametros["messages"][1]["content"]
+    )
+
+
+def test_ejecutar_correccion_reintenta_borrador_identico():
+    """
+    Una copia exacta del borrador rechazado no es una corrección.
+    """
+    borrador_anterior = _crear_borrador_explicacion()
+
+    respuesta_identica = _crear_respuesta_groq_simulada(
+        borrador_anterior.model_dump()
+    )
+    respuesta_corregida = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "explicacion",
+            "titulo": "El método append",
+            "contenido_markdown": (
+                "`append` añade un elemento al final "
+                "de una lista. [fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        }
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuestas=[
+            respuesta_identica,
+            respuesta_corregida,
+        ],
+    )
+
+    resultado = ejecutar_correccion_borrador(
+        accion="responder_consulta",
+        tecnologia="python",
+        peticion_usuario="¿Qué hace append?",
+        consulta_documentacion="método append de listas",
+        fuentes_extraidas=[
+            _crear_fuente_extraida(),
+        ],
+        borrador_anterior=borrador_anterior,
+        revision=_crear_revision_rechazada_tutor(),
+        cliente=cliente,
+    )
+
+    assert resultado.titulo == "El método append"
+    assert cliente.completions.numero_llamadas == 2
+
+    mensaje_correccion = (
+        cliente.completions.historial_parametros[1]
+        ["messages"][-1]["content"]
+    )
+
+    assert "no ha modificado el borrador rechazado" in (
+        mensaje_correccion
+    )
+
+
+def test_ejecutar_correccion_reintenta_json_rechazado_por_groq(
+    monkeypatch,
+):
+    """
+    Comprueba el tratamiento compartido de json_validate_failed.
+    """
+    class BadRequestGroqSimulado(Exception):
+        """Representa el error HTTP 400 de Structured Outputs."""
+
+        def __init__(self, mensaje, body):
+            super().__init__(mensaje)
+            self.body = body
+
+    monkeypatch.setattr(
+        modulo_tutor_investigador,
+        "BadRequestError",
+        BadRequestGroqSimulado,
+    )
+
+    error_json = BadRequestGroqSimulado(
+        "JSON inválido",
+        body={
+            "code": "json_validate_failed",
+            "failed_generation": (
+                '{"tipo": "explicacion"}'
+            ),
+        },
+    )
+
+    respuesta_corregida = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "explicacion",
+            "titulo": "El método append",
+            "contenido_markdown": (
+                "`append` añade un elemento al final "
+                "de una lista. [fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        }
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuestas=[
+            error_json,
+            respuesta_corregida,
+        ],
+    )
+
+    resultado = ejecutar_correccion_borrador(
+        accion="responder_consulta",
+        tecnologia="python",
+        peticion_usuario="¿Qué hace append?",
+        consulta_documentacion="método append",
+        fuentes_extraidas=[
+            _crear_fuente_extraida(),
+        ],
+        borrador_anterior=_crear_borrador_explicacion(),
+        revision=_crear_revision_rechazada_tutor(),
+        cliente=cliente,
+    )
+
+    assert resultado.tipo == "explicacion"
+    assert cliente.completions.numero_llamadas == 2
+
+    mensaje_segundo_intento = (
+        cliente.completions.historial_parametros[1]
+        ["messages"][-1]["content"]
+    )
+
+    assert "contenido_markdown" in mensaje_segundo_intento
+    assert "fuente-1" in mensaje_segundo_intento
+
+
+def test_ejecutar_correccion_valida_antes_de_llamar_groq():
+    """
+    Un borrador aprobado no debe consumir tokens de corrección.
+    """
+    revision_aprobada = RevisionBorrador(
+        aprobado=True,
+        fuentes_comprobadas=["fuente-1"],
+        problemas_detectados=[],
+        instrucciones_revision=None,
+        resumen_revision=(
+            "El borrador está correctamente respaldado."
+        ),
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuesta=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="aprobado no necesita corrección",
+    ):
+        ejecutar_correccion_borrador(
+            accion="responder_consulta",
+            tecnologia="python",
+            peticion_usuario="¿Qué hace append?",
+            consulta_documentacion="método append",
+            fuentes_extraidas=[
+                _crear_fuente_extraida(),
+            ],
+            borrador_anterior=_crear_borrador_explicacion(),
+            revision=revision_aprobada,
+            cliente=cliente,
+        )
+
+    assert cliente.completions.numero_llamadas == 0

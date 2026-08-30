@@ -34,6 +34,10 @@ MODELO_GROQ = "openai/gpt-oss-20b"
 # Tiempo máximo de espera para una llamada al modelo.
 TIMEOUT_GROQ = 30
 
+# Desactiva los reintentos automáticos internos del SDK.
+# Nuestros agentes ya controlan sus ciclos y errores explícitamente.
+MAX_REINTENTOS_SDK_GROQ = 0
+
 # Límite máximo para la salida y el razonamiento del coordinador.
 MAX_TOKENS_COORDINADOR = 1_000
 
@@ -54,12 +58,34 @@ MAX_TOKENS_BORRADOR = 4_000
 # Evita ciclos indefinidos y controla el consumo de tokens.
 MAX_INTENTOS_BORRADOR = 2
 
+# Tokens máximos para revisar un borrador documentado.
+# La revisión es más breve que el borrador, pero debe justificar su decisión.
+MAX_TOKENS_REVISION = 1_500
+
+# Permite corregir una salida de evaluación mal formada o incoherente.
+MAX_INTENTOS_REVISION = 2
+
+# Permite evaluar el borrador inicial y una única versión corregida.
+# Este límite controla el ciclo entre redactor y evaluador.
+MAX_REVISIONES_BORRADOR = 2
+
+# Tokens máximos para evaluar la respuesta de un estudiante.
+# La evaluación necesita justificar la nota sin generar textos extensos.
+MAX_TOKENS_EVALUACION = 1_500
+
+# Permite una llamada inicial y una corrección si la salida es inválida.
+MAX_INTENTOS_EVALUACION = 2
+
 # Límites para controlar el consumo y evitar bucles infinitos.
 MAX_RESULTADOS_BUSQUEDA = 5
 MAX_BUSQUEDAS_POR_TURNO = 3
 MAX_EXTRACCIONES_POR_TURNO = 3
 MAX_FRAGMENTOS_POR_FUENTE = 3
 MAX_CARACTERES_EXTRAIDOS = 12_000
+
+# Conserva como máximo diez intercambios usuario-asistente.
+# Evita que el estado y los futuros prompts crezcan indefinidamente.
+MAX_MENSAJES_HISTORIAL = 20
 
 
 # Configuración de bajo consumo para Tavily.

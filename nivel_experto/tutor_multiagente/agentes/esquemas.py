@@ -535,3 +535,369 @@ class BorradorTutor(BaseModel):
             )
 
         return self
+
+class RevisionBorrador(BaseModel):
+    """
+    Representa la revisión del evaluador sobre un BorradorTutor.
+
+    El evaluador comprueba que el contenido responda a la petición,
+    sea coherente y esté respaldado por las fuentes oficiales.
+    """
+
+    # Rechaza propiedades inventadas y conversiones permisivas.
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        str_strip_whitespace=True,
+    )
+
+    aprobado: bool = Field(
+        description=(
+            "Indica si el borrador puede convertirse en respuesta final."
+        )
+    )
+
+    fuentes_comprobadas: list[str] = Field(
+        min_length=1,
+        max_length=3,
+        description=(
+            "Identificadores de las fuentes que el evaluador ha revisado."
+        ),
+    )
+
+    problemas_detectados: list[str] = Field(
+        max_length=5,
+        description=(
+            "Problemas concretos encontrados en el borrador. "
+            "Debe estar vacío cuando el borrador esté aprobado."
+        ),
+    )
+
+    instrucciones_revision: str | None = Field(
+        max_length=1_000,
+        description=(
+            "Cambios que debe realizar el redactor, o null si el "
+            "borrador está aprobado."
+        ),
+    )
+
+    resumen_revision: str = Field(
+        min_length=3,
+        max_length=500,
+        description=(
+            "Justificación breve de la decisión del evaluador."
+        ),
+    )
+
+    @field_validator("fuentes_comprobadas")
+    @classmethod
+    def validar_fuentes_comprobadas(
+        cls,
+        valores: list[str],
+    ) -> list[str]:
+        """
+        Comprueba formato y duplicados de las fuentes revisadas.
+        """
+        fuentes_validadas = []
+        fuentes_incluidas = set()
+
+        for valor in valores:
+            if not isinstance(valor, str):
+                raise TypeError(
+                    "Cada fuente comprobada debe ser texto."
+                )
+
+            identificador = valor.strip()
+
+            # Solo acepta identificadores producidos por Tavily Extract.
+            if re.fullmatch(
+                r"fuente-[1-9][0-9]*",
+                identificador,
+            ) is None:
+                raise ValueError(
+                    "Las fuentes comprobadas deben seguir "
+                    "el formato 'fuente-N'."
+                )
+
+            if identificador in fuentes_incluidas:
+                raise ValueError(
+                    "No se puede comprobar dos veces la misma fuente."
+                )
+
+            fuentes_incluidas.add(identificador)
+            fuentes_validadas.append(identificador)
+
+        return fuentes_validadas
+
+    @field_validator("problemas_detectados")
+    @classmethod
+    def validar_problemas_detectados(
+        cls,
+        valores: list[str],
+    ) -> list[str]:
+        """
+        Normaliza los problemas y rechaza entradas vacías o repetidas.
+        """
+        problemas_validados = []
+        problemas_incluidos = set()
+
+        for valor in valores:
+            if not isinstance(valor, str):
+                raise TypeError(
+                    "Cada problema detectado debe ser texto."
+                )
+
+            problema = valor.strip()
+
+            if not problema:
+                raise ValueError(
+                    "Los problemas detectados no pueden estar vacíos."
+                )
+
+            if problema in problemas_incluidos:
+                raise ValueError(
+                    "Los problemas detectados no pueden repetirse."
+                )
+
+            problemas_incluidos.add(problema)
+            problemas_validados.append(problema)
+
+        return problemas_validados
+
+    @field_validator("instrucciones_revision")
+    @classmethod
+    def validar_instrucciones_revision(
+        cls,
+        valor: str | None,
+    ) -> str | None:
+        """
+        Impide aceptar instrucciones formadas únicamente por espacios.
+        """
+        if valor is None:
+            return None
+
+        instrucciones = valor.strip()
+
+        if not instrucciones:
+            raise ValueError(
+                "Las instrucciones de revisión no pueden estar vacías."
+            )
+
+        return instrucciones
+
+    @model_validator(mode="after")
+    def validar_coherencia_revision(self) -> Self:
+        """
+        Relaciona la aprobación con problemas e instrucciones.
+        """
+        if self.aprobado:
+            # Un borrador aprobado no necesita cambios.
+            if self.problemas_detectados:
+                raise ValueError(
+                    "Una revisión aprobada no debe contener problemas."
+                )
+
+            if self.instrucciones_revision is not None:
+                raise ValueError(
+                    "Una revisión aprobada no necesita instrucciones."
+                )
+
+        else:
+            # Un rechazo debe explicar qué está mal.
+            if not self.problemas_detectados:
+                raise ValueError(
+                    "Una revisión rechazada debe indicar problemas."
+                )
+
+            # El redactor necesita instrucciones concretas para corregirlo.
+            if self.instrucciones_revision is None:
+                raise ValueError(
+                    "Una revisión rechazada requiere instrucciones."
+                )
+
+        return self
+
+class EvaluacionEjercicio(BaseModel):
+    """
+    Representa la evaluación de la respuesta del estudiante.
+
+    Los criterios se identifican mediante IDs internos para impedir que
+    el modelo modifique o invente libremente la rúbrica del ejercicio.
+    """
+
+    # Rechaza campos adicionales y conversiones automáticas de tipos.
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        str_strip_whitespace=True,
+    )
+
+    respuesta_correcta: bool = Field(
+        description=(
+            "Indica si la respuesta satisface todos los criterios "
+            "necesarios del ejercicio."
+        )
+    )
+
+    puntuacion: int = Field(
+        ge=0,
+        le=10,
+        description=(
+            "Valoración entera de la respuesta entre 0 y 10."
+        ),
+    )
+
+    criterios_cumplidos: list[str] = Field(
+        max_length=5,
+        description=(
+            "Identificadores de los criterios satisfechos."
+        ),
+    )
+
+    criterios_pendientes: list[str] = Field(
+        max_length=5,
+        description=(
+            "Identificadores de los criterios que faltan o son incorrectos."
+        ),
+    )
+
+    retroalimentacion_markdown: str = Field(
+        min_length=20,
+        max_length=4_000,
+        description=(
+            "Explicación educativa de los aciertos y aspectos a mejorar."
+        ),
+    )
+
+    recomendacion_siguiente: str | None = Field(
+        max_length=500,
+        description=(
+            "Siguiente paso sugerido al estudiante o null si no procede."
+        ),
+    )
+
+    @field_validator(
+        "criterios_cumplidos",
+        "criterios_pendientes",
+    )
+    @classmethod
+    def validar_identificadores_criterios(
+        cls,
+        valores: list[str],
+    ) -> list[str]:
+        """
+        Comprueba formato y duplicados dentro de cada lista.
+        """
+        criterios_validados = []
+        criterios_incluidos = set()
+
+        for valor in valores:
+            if not isinstance(valor, str):
+                raise TypeError(
+                    "Cada identificador de criterio debe ser texto."
+                )
+
+            identificador = valor.strip()
+
+            # Solo acepta IDs creados por nuestro mensaje de evaluación.
+            if re.fullmatch(
+                r"criterio-[1-5]",
+                identificador,
+            ) is None:
+                raise ValueError(
+                    "Los criterios deben seguir el formato "
+                    "'criterio-N', entre criterio-1 y criterio-5."
+                )
+
+            if identificador in criterios_incluidos:
+                raise ValueError(
+                    "No se puede incluir dos veces el mismo criterio."
+                )
+
+            criterios_incluidos.add(identificador)
+            criterios_validados.append(identificador)
+
+        return criterios_validados
+
+    @field_validator("recomendacion_siguiente")
+    @classmethod
+    def validar_recomendacion_siguiente(
+        cls,
+        valor: str | None,
+    ) -> str | None:
+        """
+        Impide aceptar una recomendación formada solamente por espacios.
+        """
+        if valor is None:
+            return None
+
+        recomendacion = valor.strip()
+
+        if not recomendacion:
+            raise ValueError(
+                "La recomendación siguiente no puede estar vacía."
+            )
+
+        return recomendacion
+
+    @model_validator(mode="after")
+    def validar_coherencia_evaluacion(self) -> Self:
+        """
+        Relaciona corrección, puntuación y criterios evaluados.
+        """
+        cumplidos = set(
+            self.criterios_cumplidos
+        )
+        pendientes = set(
+            self.criterios_pendientes
+        )
+
+        # Un mismo criterio no puede estar cumplido y pendiente.
+        criterios_solapados = cumplidos & pendientes
+
+        if criterios_solapados:
+            identificadores = ", ".join(
+                sorted(criterios_solapados)
+            )
+
+            raise ValueError(
+                "Un criterio no puede estar cumplido y pendiente: "
+                f"{identificadores}."
+            )
+
+        # Toda evaluación debe pronunciarse sobre algún criterio.
+        if not cumplidos and not pendientes:
+            raise ValueError(
+                "La evaluación debe incluir algún criterio."
+            )
+
+        if self.respuesta_correcta:
+            # Una respuesta correcta no puede dejar requisitos pendientes.
+            if pendientes:
+                raise ValueError(
+                    "Una respuesta correcta no debe tener "
+                    "criterios pendientes."
+                )
+
+            # Evita aprobar respuestas con una nota claramente insuficiente.
+            if self.puntuacion < 7:
+                raise ValueError(
+                    "Una respuesta correcta debe obtener "
+                    "al menos 7 puntos."
+                )
+
+        else:
+            # Una respuesta incorrecta debe indicar qué falta.
+            if not pendientes:
+                raise ValueError(
+                    "Una respuesta incorrecta debe indicar "
+                    "criterios pendientes."
+                )
+
+            # Una puntuación perfecta se reserva para respuestas correctas.
+            if self.puntuacion == 10:
+                raise ValueError(
+                    "Una respuesta incorrecta no puede obtener 10 puntos."
+                )
+
+        return self
