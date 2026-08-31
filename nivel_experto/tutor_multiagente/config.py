@@ -26,6 +26,10 @@ RUTA_CATALOGO_FUENTES = (
 )
 RUTA_DIRECTORIO_PROGRESO = DIRECTORIO_PROYECTO / "datos" / "progreso"
 RUTA_DIRECTORIO_LOGS = DIRECTORIO_PROYECTO / "logs"
+# Archivo que contiene los casos utilizados para evaluar el agente.
+RUTA_CASOS_EVALUACION = (
+    DIRECTORIO_PROYECTO / "evaluacion" / "casos_prueba.json"
+)
 
 
 # Modelo que utilizarán los tres agentes en Groq.
@@ -87,6 +91,10 @@ MAX_CARACTERES_EXTRAIDOS = 12_000
 # Evita que el estado y los futuros prompts crezcan indefinidamente.
 MAX_MENSAJES_HISTORIAL = 20
 
+# Número máximo de pasos internos permitidos en un turno de LangGraph.
+# El recorrido más largo previsto utiliza seis nodos, por lo que diez
+# permite completarlo sin aceptar un posible bucle infinito.
+MAX_PASOS_LANGGRAPH = 10
 
 # Configuración de bajo consumo para Tavily.
 PROFUNDIDAD_BUSQUEDA = "basic"

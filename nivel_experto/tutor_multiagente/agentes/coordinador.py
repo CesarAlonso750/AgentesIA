@@ -76,6 +76,12 @@ Reglas:
 14. Si hay_ejercicio_activo es false, no selecciones evaluar_respuesta.
 15. tecnologia_contexto puede utilizarse para interpretar seguimientos breves,
     pero no inventes una tecnología cuando ese campo sea null.
+16. Si el estudiante menciona una tecnología reconocible que no está
+    registrada, selecciona pedir_aclaracion. El mensaje debe indicar
+    explícitamente que esa tecnología no está disponible y debe ofrecer
+    las tecnologías registradas como alternativas.
+17. No preguntes qué significa el nombre de una tecnología externa cuando
+    la intención sea clara. Explica directamente el alcance del tutor.
 """.strip()
 
 

@@ -131,6 +131,21 @@ def test_construir_prompt_coordinador_incluye_catalogo_y_acciones():
     # La frase ocupa varias líneas dentro del prompt.
     assert "contenido no confiable" in prompt_normalizado
 
+        # Una tecnología externa reconocible debe producir una
+    # explicación del alcance, no una aclaración innecesaria.
+    assert (
+        "tecnología reconocible que no está registrada"
+        in prompt_normalizado
+    )
+    assert (
+        "esa tecnología no está disponible"
+        in prompt_normalizado
+    )
+    assert (
+        "ofrecer las tecnologías registradas como alternativas"
+        in prompt_normalizado
+    )
+
 
 def test_interpretar_decision_coordinador_acepta_json_textual():
     """Comprueba el formato que utilizará la implementación manual."""

@@ -441,3 +441,273 @@ extracción, redacción y primera revisión. El evaluador solicitó una
 corrección, pero Groq devolvió HTTP 429 durante esa llamada. El flujo previo
 funcionó correctamente y el límite externo permitió detectar la necesidad de
 desactivar los reintentos internos del SDK y controlar `Ctrl+C`.
+
+## DT-006: segunda orquestación mediante LangGraph
+
+**Fecha:** 31 de agosto de 2026
+
+### Contexto
+
+La versión manual ya implementaba el flujo completo mediante funciones,
+condicionales y bucles Python. El proyecto también debe comparar esa
+aproximación con un framework de orquestación y mostrar un flujo con varios
+agentes, herramientas y pasos repetidos.
+
+El punto más relevante para la comparación es el ciclo entre el
+tutor-investigador y el evaluador:
+
+`borrador → revisión → corrección opcional → nueva revisión`
+
+### Opciones consideradas
+
+1. Mantener únicamente la implementación manual.
+2. Reescribir agentes y herramientas específicamente para LangGraph.
+3. Reutilizar todos los componentes y sustituir únicamente la orquestación.
+4. Utilizar LangGraph solamente como envoltorio de la función manual completa.
+
+### Decisión
+
+Se eligió la tercera opción: reutilizar agentes, herramientas, esquemas,
+estado, progreso y logging, pero representar el recorrido mediante nodos y
+aristas de LangGraph.
+
+Los nodos del grafo son:
+
+- `coordinador`
+- `investigador`
+- `revision`
+- `correccion`
+- `finalizacion_revision`
+- `evaluacion`
+
+Las decisiones condicionales se mantienen en funciones deterministas:
+
+- `enrutar_despues_coordinador`
+- `enrutar_despues_revision`
+
+El grafo contiene explícitamente la arista:
+
+`correccion → revision`
+
+Por tanto, el ciclo de revisión es visible e inspeccionable y no queda oculto
+dentro de un nodo o de una única función Python.
+
+### Estado
+
+`EstadoGrafoTutor` amplía `EstadoTutor` con dos campos internos:
+
+- `borrador_actual`
+- `revision_actual`
+
+Ambos circulan como modelos Pydantic validados. La finalización transforma
+esos modelos internos en campos públicos del estado.
+
+Un borrador rechazado definitivamente nunca se entrega como respuesta final.
+
+### Límite del grafo
+
+Se configuró un límite de diez pasos por turno. El recorrido más largo
+esperado utiliza seis nodos:
+
+1. Coordinador.
+2. Investigador.
+3. Primera revisión.
+4. Corrección.
+5. Segunda revisión.
+6. Finalización.
+
+Este límite complementa las dos revisiones máximas del borrador y protege
+frente a ciclos inesperados.
+
+### Reutilización de la terminal
+
+La terminal LangGraph reutiliza `ejecutar_chat_terminal` de la versión manual.
+Un adaptador transforma:
+
+`ejecutor(estado, directorio, logger)`
+
+en:
+
+`grafo.invoke(estado, config)`
+
+Así, memoria, validación de entradas, comando `salir`, presentación y manejo
+de errores son idénticos. La comparación se centra solamente en la
+orquestación.
+
+### Consecuencias positivas
+
+- Las rutas y el ciclo pueden visualizarse mediante Mermaid.
+- Los nodos pueden probarse individualmente.
+- Los recorridos completos pueden probarse con dependencias simuladas.
+- No se duplican agentes ni herramientas.
+- El framework controla la transición entre nodos.
+- Añadir una nueva ruta exigiría menos cambios en condicionales centrales.
+
+### Consecuencias negativas
+
+- Se añade una dependencia y una capa de abstracción.
+- Es necesario comprender cómo LangGraph actualiza el estado.
+- Algunos errores aparecen envueltos por la ejecución del grafo.
+- La firma del constructor contiene varios clientes para permitir pruebas
+  completamente aisladas.
+- Para un flujo pequeño, la versión manual puede resultar más fácil de leer.
+
+### Comparación final
+
+La versión manual explica mejor el funcionamiento interno y ofrece control
+directo. La versión LangGraph expresa mejor las relaciones entre componentes,
+especialmente las bifurcaciones y el ciclo de revisión.
+
+LangGraph no sustituye la validación, los límites ni el manejo de errores.
+Estas responsabilidades siguen perteneciendo al código del proyecto.
+
+### Evidencia
+
+Se verificaron tres recorridos completos sin APIs:
+
+1. Investigación, primer rechazo, corrección y segunda aprobación.
+2. Petición ambigua que termina después del coordinador.
+3. Respuesta a un ejercicio que pasa directamente al evaluador.
+
+La representación Mermaid confirmó la existencia de todas las rutas y de la
+arista `correccion → revision`.
+
+La suite completa alcanzó 608 pruebas superadas.
+
+## DT-007: evaluación mediante casos y criterios observables
+
+**Fecha:** 31 de agosto de 2026
+
+### Contexto
+
+Una respuesta generada por un LLM puede cambiar entre ejecuciones aunque siga
+siendo válida. Comparar el texto completo con una respuesta exacta produciría
+falsos fallos y no comprobaría necesariamente los comportamientos importantes.
+
+También sería insuficiente pedir al propio modelo que decidiera si su
+respuesta es correcta, porque no constituiría una revisión independiente.
+
+### Opciones consideradas
+
+1. Probar únicamente algunas preguntas manuales sin registrar resultados.
+2. Comparar cada respuesta con un texto exacto.
+3. Utilizar otro LLM como juez automático.
+4. Definir casos estables con criterios observables y revisión humana.
+5. Combinar tests deterministas con casos manuales para el comportamiento
+   dependiente del modelo.
+
+### Decisión
+
+Se eligió la quinta opción.
+
+Los componentes que no dependen del comportamiento semántico del modelo se
+comprueban mediante pytest y clientes simulados.
+
+El comportamiento completo del agente se revisa mediante ocho casos
+almacenados en `evaluacion/casos_prueba.json`.
+
+Cada caso contiene:
+
+- Identificador estable.
+- Categoría.
+- Entrada del estudiante.
+- Contexto previo cuando sea necesario.
+- Acción esperada.
+- Tecnología esperada.
+- Criterios observables.
+
+Los resultados se registran por separado en
+`evaluacion/resultados_revision_manual.md`. Esto permite mantener estable el
+conjunto de preguntas y registrar varias ejecuciones sin modificar su
+definición.
+
+### Estados de evaluación
+
+Se utilizan cinco estados:
+
+- `Superado`: cumple todos los criterios.
+- `Parcial`: cumple algunos criterios, pero necesita una mejora.
+- `No superado`: contradice un criterio esencial.
+- `Bloqueado`: una dependencia externa impide terminar la ejecución.
+- `No ejecutado`: todavía no existe evidencia.
+
+La categoría `Bloqueado` evita atribuir al comportamiento del agente un fallo
+temporal de Groq o Tavily.
+
+### Cobertura de los casos
+
+El conjunto incluye:
+
+- Petición ambigua.
+- Consulta sobre Python.
+- Consulta sobre Java.
+- Consulta sobre Git.
+- Generación de un ejercicio.
+- Evaluación de una respuesta con contexto.
+- Tecnología fuera del catálogo.
+- Intento de cambiar las reglas y utilizar fuentes no oficiales.
+
+### Validación del conjunto
+
+Los casos se cargan mediante `CasoEvaluacion`, un modelo Pydantic estricto.
+
+El cargador comprueba:
+
+- Formato `CP-NNN`.
+- Campos obligatorios.
+- Acciones permitidas.
+- Tecnologías registradas.
+- Criterios no vacíos ni repetidos.
+- Ausencia de propiedades adicionales.
+- Identificadores únicos.
+- JSON y estructura general válidos.
+
+Estas comprobaciones no consumen APIs.
+
+### Evidencia de mejora
+
+El caso CP-007 preguntó por React, una tecnología no incluida.
+
+En la primera ejecución el coordinador seleccionó correctamente
+`pedir_aclaracion` y no ejecutó herramientas, pero solo preguntó a qué React
+se refería. El resultado fue parcial: 1 de 3 criterios.
+
+Se añadieron dos reglas al prompt del coordinador:
+
+1. Informar expresamente cuando una tecnología no está disponible.
+2. Ofrecer Python, Java y Git como alternativas.
+
+Al repetir exactamente el mismo caso, el resultado pasó a 3 de 3 criterios.
+El coordinador explicó el alcance, ofreció las tecnologías disponibles y
+continuó sin utilizar herramientas.
+
+Esta prueba demuestra que el conjunto no es únicamente documentación: detectó
+un comportamiento mejorable y permitió comprobar la corrección.
+
+### Limitaciones
+
+- La revisión humana requiere tiempo.
+- Algunos casos completos consumen varias llamadas externas.
+- Una respuesta puede necesitar juicio para decidir si una afirmación está
+  suficientemente respaldada.
+- Los límites temporales de los proveedores pueden bloquear una ejecución.
+- Los ocho casos no cubren todas las posibles formas de preguntar.
+
+### Próxima mejora prioritaria
+
+Con una semana adicional, la primera mejora sería añadir una estrategia de
+reintento limitada para errores externos transitorios.
+
+El reintento debería:
+
+- Aplicarse solo a errores recuperables.
+- Respetar el tiempo indicado por el proveedor.
+- Tener un número máximo de intentos.
+- Registrar únicamente el tipo de error y el intento.
+- No repetir errores de autenticación, validación o parámetros.
+- Mantener el límite general del grafo.
+
+Se prioriza esta mejora porque una ejecución completa encadena varias llamadas
+correctas y puede perder todo el turno por un único fallo temporal. Mejorar la
+fiabilidad aporta más valor inmediato que añadir otra tecnología o un cuarto
+agente.
