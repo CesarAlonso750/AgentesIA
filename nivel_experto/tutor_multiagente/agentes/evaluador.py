@@ -1,4 +1,5 @@
 import json  # Convierte borradores y fuentes en datos estructurados.
+import re  # Detecta referencias a datos internos en la evaluación.
 
 # Importa los errores específicos que puede devolver el SDK de Groq.
 from groq import (
@@ -19,6 +20,7 @@ from nivel_experto.tutor_multiagente.agentes.cliente_groq import (
     crear_cliente_groq,
     extraer_generacion_json_fallida,
     obtener_contenido_respuesta,
+    solicitar_completion_groq,
 )
 
 # Importa las estructuras validadas utilizadas por el evaluador.
@@ -77,6 +79,19 @@ Comprobaciones técnicas:
 11. Comprueba que no se inventen funciones, comandos, resultados,
     comportamientos ni características.
 12. Comprueba que todas las fuentes proporcionadas sean revisadas.
+
+Control de afirmaciones y versiones:
+
+- Revisa especialmente las afirmaciones absolutas que utilicen palabras como
+  "todos", "ninguno", "siempre", "nunca" o "solo".
+- Antes de aprobar una afirmación absoluta, busca posibles excepciones en todas
+  las fuentes proporcionadas. Si una fuente muestra una excepción, recházala.
+- Cuando el comportamiento dependa de la versión de una tecnología, prioriza
+  la fuente más reciente aplicable y rechaza reglas históricas presentadas
+  como comportamiento actual.
+- Si las fuentes son contradictorias o insuficientes para confirmar una
+  afirmación, solicita que se limite o matice. No la apruebes utilizando
+  conocimiento externo.
 
 Reglas sobre citas:
 
@@ -174,9 +189,15 @@ Retroalimentación:
 18. Explica primero los aciertos y después los aspectos pendientes.
 19. Relaciona cada observación con la rúbrica o las fuentes.
 20. No reveles automáticamente la solución privada completa.
-21. Proporciona orientación suficiente para que el estudiante pueda mejorar.
-22. No menciones agentes, prompts, JSON, herramientas ni procesos internos.
-23. recomendacion_siguiente puede ser null si la respuesta ya es correcta.
+21. No menciones ni utilices ante el estudiante expresiones como "solución
+    privada", "solución de referencia" o "solución esperada".
+22. No reproduzcas ni parafrasees todos los pasos de la solución privada.
+23. Para una respuesta incorrecta, explica qué requisito observable falta y
+    proporciona una pista breve, sin escribir la implementación completa.
+24. No muestres identificadores internos como criterio-1 o criterio-2.
+25. Proporciona orientación suficiente para que el estudiante pueda mejorar.
+26. No menciones agentes, prompts, JSON, herramientas ni procesos internos.
+27. recomendacion_siguiente puede ser null si la respuesta ya es correcta.
 """.strip()
 
 def construir_mensaje_revision(
@@ -527,6 +548,81 @@ def validar_criterios_evaluacion(
         + "."
     )
 
+def validar_privacidad_evaluacion(
+    evaluacion: object,
+    ejercicio: object,
+) -> None:
+    """
+    Impide mostrar la solución privada o identificadores internos.
+    """
+    if not isinstance(evaluacion, EvaluacionEjercicio):
+        raise TypeError(
+            "La privacidad requiere una EvaluacionEjercicio validada."
+        )
+
+    ejercicio_validado = interpretar_borrador_tutor(
+        ejercicio
+    )
+
+    if ejercicio_validado.tipo != "ejercicio":
+        raise ValueError(
+            "La privacidad solo puede comprobar ejercicios."
+        )
+
+    # Reúne únicamente el contenido que llegará al estudiante.
+    partes_visibles = [
+        evaluacion.retroalimentacion_markdown,
+        evaluacion.recomendacion_siguiente or "",
+    ]
+
+    texto_visible = " ".join(
+        " ".join(partes_visibles).casefold().split()
+    )
+
+    # Estas expresiones revelan directamente datos internos del sistema.
+    expresiones_privadas = (
+        "solución privada",
+        "solucion privada",
+        "solución de referencia",
+        "solucion de referencia",
+        "solución esperada",
+        "solucion esperada",
+        "respuesta de referencia",
+    )
+
+    if any(
+        expresion in texto_visible
+        for expresion in expresiones_privadas
+    ):
+        raise ValueError(
+            "La evaluación menciona información privada del ejercicio."
+        )
+
+    # Los identificadores criterio-N son internos y no deben mostrarse.
+    if re.search(
+        r"\bcriterio-[1-5]\b",
+        texto_visible,
+    ) is not None:
+        raise ValueError(
+            "La evaluación muestra identificadores internos de la rúbrica."
+        )
+
+    # Impide también copiar literalmente la solución sin nombrarla.
+    solucion = ejercicio_validado.solucion_esperada
+
+    if solucion is not None:
+        solucion_normalizada = " ".join(
+            solucion.casefold().split()
+        )
+
+        if (
+            len(solucion_normalizada) >= 20
+            and solucion_normalizada in texto_visible
+        ):
+            raise ValueError(
+                "La evaluación reproduce la solución privada."
+            )
+
 def _construir_formato_revision() -> dict[str, object]:
     """
     Construye el JSON Schema estricto utilizado para revisar borradores.
@@ -727,7 +823,9 @@ def ejecutar_revision_borrador(
         MAX_INTENTOS_REVISION + 1,
     ):
         try:
-            respuesta = cliente_chat.chat.completions.create(
+            # Reintenta de forma limitada si Groq proporciona retry-after.
+            respuesta = solicitar_completion_groq(
+                cliente_chat,
                 model=MODELO_GROQ,
                 messages=mensajes,
 
@@ -963,7 +1061,9 @@ def ejecutar_evaluacion_ejercicio(
         MAX_INTENTOS_EVALUACION + 1,
     ):
         try:
-            respuesta = cliente_chat.chat.completions.create(
+            # Reintenta de forma limitada si Groq proporciona retry-after.
+            respuesta = solicitar_completion_groq(
+                cliente_chat,
                 model=MODELO_GROQ,
                 messages=mensajes,
 
@@ -1082,6 +1182,12 @@ def ejecutar_evaluacion_ejercicio(
 
             # Comprueba la relación con la rúbrica del ejercicio actual.
             validar_criterios_evaluacion(
+                evaluacion,
+                ejercicio_validado,
+            )
+
+            # Impide mostrar la solución o identificadores internos.
+            validar_privacidad_evaluacion(
                 evaluacion,
                 ejercicio_validado,
             )

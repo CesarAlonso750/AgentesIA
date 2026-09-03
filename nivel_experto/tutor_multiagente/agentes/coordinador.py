@@ -13,6 +13,7 @@ from nivel_experto.tutor_multiagente.agentes.cliente_groq import (
     ClienteGroq,
     crear_cliente_groq,
     obtener_contenido_respuesta,
+    solicitar_completion_groq,
 )
 
 from nivel_experto.tutor_multiagente.agentes.esquemas import (
@@ -82,6 +83,18 @@ Reglas:
     las tecnologías registradas como alternativas.
 17. No preguntes qué significa el nombre de una tecnología externa cuando
     la intención sea clara. Explica directamente el alcance del tutor.
+18. Los mensajes visibles para el estudiante deben estar siempre en español.
+19. Cuando una acción requiera documentación, redacta
+    consulta_documentacion en inglés para mejorar la búsqueda en las fuentes
+    oficiales. Conserva sin traducir identificadores técnicos como append,
+    interface, abstract class, merge o rebase.
+20. El idioma de consulta_documentacion no determina el idioma de la respuesta
+    final: el tutor-investigador seguirá respondiendo al estudiante en español.
+21. Si el estudiante no indica una versión y el comportamiento puede haber
+    cambiado entre versiones, orienta consulta_documentacion al comportamiento
+    actual e incluye términos como current o latest cuando resulten útiles.
+22. Si el estudiante solicita una versión concreta, conserva esa versión en
+    consulta_documentacion y no la sustituyas por la versión más reciente.
 """.strip()
 
 
@@ -274,7 +287,9 @@ def ejecutar_coordinador(
     # Limita el bucle para impedir reintentos indefinidos.
     for numero_intento in range(1, MAX_INTENTOS_COORDINADOR + 1):
         try:
-            respuesta = cliente_chat.chat.completions.create(
+            # Centraliza el reintento limitado de errores HTTP 429.
+            respuesta = solicitar_completion_groq(
+                cliente_chat,
                 model=MODELO_GROQ,
                 messages=mensajes,
 

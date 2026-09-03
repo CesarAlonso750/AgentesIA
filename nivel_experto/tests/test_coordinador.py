@@ -145,7 +145,21 @@ def test_construir_prompt_coordinador_incluye_catalogo_y_acciones():
         "ofrecer las tecnologías registradas como alternativas"
         in prompt_normalizado
     )
+    # Las búsquedas usan el idioma más habitual de la documentación oficial.
+    assert "consulta_documentacion en inglés" in prompt_normalizado
+    assert "mensajes visibles" in prompt_normalizado
+    assert "respondiendo al estudiante en español" in prompt_normalizado
 
+        # Las consultas sin versión deben buscar el comportamiento vigente.
+    assert "comportamiento actual" in prompt_normalizado
+    assert "current o latest" in prompt_normalizado
+
+    # Una versión solicitada expresamente debe conservarse.
+    assert "conserva esa versión" in prompt_normalizado
+    assert (
+        "no la sustituyas por la versión más reciente"
+        in prompt_normalizado
+    )
 
 def test_interpretar_decision_coordinador_acepta_json_textual():
     """Comprueba el formato que utilizará la implementación manual."""

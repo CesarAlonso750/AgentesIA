@@ -27,6 +27,8 @@ EVENTOS_PERMITIDOS = {
     "revision_completada",
     "evaluacion_completada",
     "progreso_guardado",
+    "reintento_programado",
+    "reintento_descartado",
     "error_controlado",
 }
 
@@ -40,6 +42,7 @@ CAMPOS_EVENTO_PERMITIDOS = {
     "iteracion",
     "puntuacion",
     "progreso_guardado",
+    "espera_segundos",
     "tipo_error",
 }
 

@@ -197,66 +197,92 @@ def buscar_documentacion(
         else _crear_cliente_tavily()
     )
 
-    # Añade el nombre de la tecnología para mejorar la búsqueda.
+    # Añade el nombre de la tecnología para mejorar la búsqueda principal.
     consulta_tavily = f"{fuente['nombre']} {consulta_normalizada}"
 
-    try:
-        # Tavily solo encuentra páginas; no genera la respuesta del tutor.
-        respuesta = cliente_busqueda.search(
-            query=consulta_tavily,
-            search_depth=PROFUNDIDAD_BUSQUEDA,
-            topic="general",
-            max_results=MAX_RESULTADOS_BUSQUEDA,
-            include_domains=dominios_permitidos,
-            include_answer=False,
-            include_raw_content=False,
-            include_images=False,
-            auto_parameters=False,
-            include_usage=True,
-            timeout=10,
-        )
-    except (MissingAPIKeyError, InvalidAPIKeyError, ForbiddenError):
-        return _crear_resultado_error(
-            "No se pudo autenticar la petición con Tavily."
-        )
-    except UsageLimitExceededError:
-        return _crear_resultado_error(
-            "Se ha alcanzado el límite de uso de Tavily."
-        )
-    except TavilyTimeoutError:
-        return _crear_resultado_error(
-            "Tavily tardó demasiado tiempo en responder."
-        )
-    except BadRequestError:
-        return _crear_resultado_error(
-            "Tavily rechazó los parámetros de la búsqueda."
-        )
-    except Exception:
-        # Impide que un fallo inesperado cierre toda la sesión.
-        return _crear_resultado_error(
-            "No se pudo completar la búsqueda por un error externo."
-        )
+    # La búsqueda avanzada es el intento principal. Si Tavily no devuelve
+    # ninguna página oficial utilizable, se realiza un único intento básico
+    # con una consulta más directa.
+    intentos_busqueda = (
+        (
+            consulta_tavily,
+            PROFUNDIDAD_BUSQUEDA,
+            3,
+        ),
+        (
+            consulta_normalizada,
+            "basic",
+            1,
+        ),
+    )
 
-    try:
-        # Filtra URLs, duplicados y estructuras incompletas.
-        resultados = _procesar_resultados(
-            respuesta,
-            dominios_permitidos,
-        )
-    except RuntimeError as error:
-        # Convierte una respuesta mal formada en un resultado controlado.
-        return _crear_resultado_error(str(error))
+    for (
+        consulta_intento,
+        profundidad_intento,
+        fragmentos_intento,
+    ) in intentos_busqueda:
+        try:
+            # Tavily solo encuentra páginas; no genera la respuesta.
+            respuesta = cliente_busqueda.search(
+                query=consulta_intento,
+                search_depth=profundidad_intento,
+                chunks_per_source=fragmentos_intento,
+                topic="general",
+                max_results=MAX_RESULTADOS_BUSQUEDA,
+                include_domains=dominios_permitidos,
+                include_answer=False,
+                include_raw_content=False,
+                include_images=False,
+                auto_parameters=False,
+                include_usage=True,
+                timeout=10,
+            )
+        except (
+            MissingAPIKeyError,
+            InvalidAPIKeyError,
+            ForbiddenError,
+        ):
+            return _crear_resultado_error(
+                "No se pudo autenticar la petición con Tavily."
+            )
+        except UsageLimitExceededError:
+            return _crear_resultado_error(
+                "Se ha alcanzado el límite de uso de Tavily."
+            )
+        except TavilyTimeoutError:
+            return _crear_resultado_error(
+                "Tavily tardó demasiado tiempo en responder."
+            )
+        except BadRequestError:
+            return _crear_resultado_error(
+                "Tavily rechazó los parámetros de la búsqueda."
+            )
+        except Exception:
+            # Impide que un fallo inesperado cierre toda la sesión.
+            return _crear_resultado_error(
+                "No se pudo completar la búsqueda por un "
+                "error externo."
+            )
 
-    # No permite que el agente invente contenido si no hay páginas válidas.
-    if not resultados:
-        return _crear_resultado_error(
-            "No se encontró documentación oficial para la consulta."
-        )
+        try:
+            # Filtra URLs, duplicados y estructuras incompletas.
+            resultados = _procesar_resultados(
+                respuesta,
+                dominios_permitidos,
+            )
+        except RuntimeError as error:
+            return _crear_resultado_error(str(error))
 
-    # Devuelve únicamente los datos que han superado nuestras validaciones.
-    return {
-        "ok": True,
-        "tecnologia": fuente["id"],
-        "consulta": consulta_normalizada,
-        "resultados": resultados,
-    }
+        # Detiene los intentos en cuanto encuentra resultados seguros.
+        if resultados:
+            return {
+                "ok": True,
+                "tecnologia": fuente["id"],
+                "consulta": consulta_normalizada,
+                "resultados": resultados,
+            }
+
+    # Los dos intentos terminaron sin páginas oficiales utilizables.
+    return _crear_resultado_error(
+        "No se encontró documentación oficial para la consulta."
+    )

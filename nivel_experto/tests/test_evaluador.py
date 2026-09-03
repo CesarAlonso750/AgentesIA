@@ -27,6 +27,7 @@ from nivel_experto.tutor_multiagente.agentes.evaluador import (
     interpretar_evaluacion_ejercicio,
     interpretar_revision_borrador,
     validar_criterios_evaluacion,
+    validar_privacidad_evaluacion,
     validar_fuentes_revision,
 )
 from nivel_experto.tutor_multiagente.agentes.cliente_groq import (
@@ -1334,6 +1335,48 @@ def test_ejecutar_revision_limita_json_rechazado_por_groq(
 
     assert cliente.completions.numero_llamadas == 2
 
+def test_prompt_revision_controla_afirmaciones_versionadas():
+    """
+    Impide aprobar generalizaciones que ignoren excepciones o versiones.
+    """
+    # Evita que los saltos de línea del prompt afecten a la prueba.
+    prompt_normalizado = " ".join(
+        PROMPT_REVISION_BORRADOR.split()
+    )
+
+    # Las generalizaciones requieren una comprobación más estricta.
+    assert (
+        "Revisa especialmente las afirmaciones absolutas"
+        in prompt_normalizado
+    )
+    assert (
+        "busca posibles excepciones en todas las fuentes"
+        in prompt_normalizado
+    )
+
+    # Una excepción documentada debe provocar el rechazo.
+    assert (
+        "Si una fuente muestra una excepción, recházala"
+        in prompt_normalizado
+    )
+
+    # El evaluador debe distinguir reglas actuales e históricas.
+    assert (
+        "prioriza la fuente más reciente aplicable"
+        in prompt_normalizado
+    )
+    assert (
+        "rechaza reglas históricas presentadas como comportamiento actual"
+        in prompt_normalizado
+    )
+
+    # La falta de pruebas no puede completarse con conocimiento externo.
+    assert (
+        "solicita que se limite o matice"
+        in prompt_normalizado
+    )
+
+
 def test_prompt_revision_acepta_citas_internas_agrupadas():
     """
     Impide que el evaluador exija URL, secciones o citas literales.
@@ -1445,12 +1488,154 @@ def test_prompt_evaluacion_exige_rubrica_completa():
 
 def test_prompt_evaluacion_no_revela_solucion_completa():
     """
-    Mantiene privada la solución de referencia.
+    Mantiene privados la solución y los identificadores internos.
     """
+    prompt_normalizado = " ".join(
+        PROMPT_EVALUACION_EJERCICIO.split()
+    )
+
     assert (
         "No reveles automáticamente la solución privada completa"
-        in PROMPT_EVALUACION_EJERCICIO
+        in prompt_normalizado
     )
+    assert (
+        "No menciones ni utilices ante el estudiante expresiones como"
+        in prompt_normalizado
+    )
+    assert (
+        "No reproduzcas ni parafrasees todos los pasos"
+        in prompt_normalizado
+    )
+    assert (
+        "No muestres identificadores internos como criterio-1"
+        in prompt_normalizado
+    )
+
+@pytest.mark.parametrize(
+    "texto_privado",
+    [
+        "Debes seguir la solución privada para completar el ejercicio.",
+        "Compara tu código con la solución de referencia proporcionada.",
+        "La solución esperada utiliza una llamada al método append.",
+    ],
+)
+def test_validar_privacidad_evaluacion_rechaza_referencias_privadas(
+    texto_privado,
+):
+    """
+    Rechaza distintas formas de mencionar la solución interna.
+    """
+    evaluacion = EvaluacionEjercicio(
+        respuesta_correcta=False,
+        puntuacion=0,
+        criterios_cumplidos=[],
+        criterios_pendientes=[
+            "criterio-1",
+            "criterio-2",
+            "criterio-3",
+        ],
+        retroalimentacion_markdown=texto_privado,
+        recomendacion_siguiente=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="información privada",
+    ):
+        validar_privacidad_evaluacion(
+            evaluacion=evaluacion,
+            ejercicio=_crear_ejercicio_evaluador(),
+        )
+
+
+def test_validar_privacidad_evaluacion_rechaza_identificadores():
+    """
+    Impide mostrar los identificadores internos de la rúbrica.
+    """
+    evaluacion = EvaluacionEjercicio(
+        respuesta_correcta=False,
+        puntuacion=5,
+        criterios_cumplidos=["criterio-1"],
+        criterios_pendientes=[
+            "criterio-2",
+            "criterio-3",
+        ],
+        retroalimentacion_markdown=(
+            "El criterio-2 todavía está pendiente en la respuesta."
+        ),
+        recomendacion_siguiente=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="identificadores internos",
+    ):
+        validar_privacidad_evaluacion(
+            evaluacion=evaluacion,
+            ejercicio=_crear_ejercicio_evaluador(),
+        )
+
+
+def test_validar_privacidad_evaluacion_rechaza_copia_literal():
+    """
+    Impide copiar la solución aunque no se indique su procedencia.
+    """
+    ejercicio = _crear_ejercicio_evaluador()
+
+    evaluacion = EvaluacionEjercicio(
+        respuesta_correcta=False,
+        puntuacion=0,
+        criterios_cumplidos=[],
+        criterios_pendientes=[
+            "criterio-1",
+            "criterio-2",
+            "criterio-3",
+        ],
+        retroalimentacion_markdown=(
+            "Puedes comparar tu respuesta con este código:\n\n"
+            f"{ejercicio.solucion_esperada}"
+        ),
+        recomendacion_siguiente=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="reproduce la solución privada",
+    ):
+        validar_privacidad_evaluacion(
+            evaluacion=evaluacion,
+            ejercicio=ejercicio,
+        )
+
+
+def test_validar_privacidad_evaluacion_acepta_orientacion():
+    """
+    Permite explicar errores y ofrecer una pista breve.
+    """
+    evaluacion = EvaluacionEjercicio(
+        respuesta_correcta=False,
+        puntuacion=3,
+        criterios_cumplidos=["criterio-1"],
+        criterios_pendientes=[
+            "criterio-2",
+            "criterio-3",
+        ],
+        retroalimentacion_markdown=(
+            "Has creado correctamente la lista, pero todavía falta "
+            "añadir el elemento solicitado y mostrar el resultado."
+        ),
+        recomendacion_siguiente=(
+            "Revisa qué método de las listas permite añadir un elemento."
+        ),
+    )
+
+    resultado = validar_privacidad_evaluacion(
+        evaluacion=evaluacion,
+        ejercicio=_crear_ejercicio_evaluador(),
+    )
+
+    assert resultado is None
+
 
 def test_construir_mensaje_evaluacion_numera_rubrica():
     """
@@ -2053,6 +2238,83 @@ def test_ejecutar_evaluacion_devuelve_resultado_validado():
     # Comprueba la separación entre instrucciones y datos.
     assert parametros["messages"][0]["role"] == "system"
     assert parametros["messages"][1]["role"] == "user"
+
+def test_ejecutar_evaluacion_corrige_filtracion_privada():
+    """
+    Reintenta si la primera evaluación menciona la solución privada.
+    """
+    evaluacion_incorrecta = _crear_respuesta_evaluador(
+        {
+            "respuesta_correcta": False,
+            "puntuacion": 0,
+            "criterios_cumplidos": [],
+            "criterios_pendientes": [
+                "criterio-1",
+                "criterio-2",
+                "criterio-3",
+            ],
+            "retroalimentacion_markdown": (
+                "Debes seguir la solución privada para completar "
+                "correctamente el ejercicio."
+            ),
+            "recomendacion_siguiente": None,
+        }
+    )
+
+    evaluacion_corregida = _crear_respuesta_evaluador(
+        {
+            "respuesta_correcta": False,
+            "puntuacion": 3,
+            "criterios_cumplidos": [
+                "criterio-1",
+            ],
+            "criterios_pendientes": [
+                "criterio-2",
+                "criterio-3",
+            ],
+            "retroalimentacion_markdown": (
+                "Has creado correctamente la lista, pero todavía "
+                "falta añadir el elemento y mostrar el resultado."
+            ),
+            "recomendacion_siguiente": (
+                "Revisa qué métodos permiten modificar y mostrar "
+                "una lista."
+            ),
+        }
+    )
+
+    cliente = ClienteEvaluadorSimulado(
+        respuestas=[
+            evaluacion_incorrecta,
+            evaluacion_corregida,
+        ]
+    )
+
+    evaluacion = ejecutar_evaluacion_ejercicio(
+        ejercicio=_crear_ejercicio_evaluador(),
+        respuesta_estudiante="lista = []",
+        fuentes_extraidas=[
+            _crear_fuente_evaluador(),
+        ],
+        cliente=cliente,
+    )
+
+    # La filtración inicial debe provocar una segunda llamada.
+    assert cliente.completions.numero_llamadas == 2
+
+    # Solamente se conserva la evaluación corregida.
+    assert evaluacion.puntuacion == 3
+    assert "solución privada" not in (
+        evaluacion.retroalimentacion_markdown.casefold()
+    )
+
+    # El reintento recibe el motivo concreto del rechazo.
+    mensaje_correccion = (
+        cliente.completions.historial_parametros[1]
+        ["messages"][-1]["content"]
+    )
+
+    assert "información privada" in mensaje_correccion
 
 def test_ejecutar_evaluacion_corrige_criterios_omitidos():
     """

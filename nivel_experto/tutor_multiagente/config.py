@@ -42,6 +42,14 @@ TIMEOUT_GROQ = 30
 # Nuestros agentes ya controlan sus ciclos y errores explícitamente.
 MAX_REINTENTOS_SDK_GROQ = 0
 
+# Número máximo de reintentos cuando Groq devuelve HTTP 429.
+# Permite varias esperas consecutivas, pero evita un bucle infinito.
+MAX_REINTENTOS_LIMITE_GROQ = 3
+
+# Evita bloquear la terminal si el proveedor solicita una espera excesiva.
+# Dos minutos permiten recuperarse de límites temporales del plan gratuito.
+MAX_ESPERA_REINTENTO_GROQ = 120
+
 # Límite máximo para la salida y el razonamiento del coordinador.
 MAX_TOKENS_COORDINADOR = 1_000
 
@@ -97,7 +105,12 @@ MAX_MENSAJES_HISTORIAL = 20
 MAX_PASOS_LANGGRAPH = 10
 
 # Configuración de bajo consumo para Tavily.
-PROFUNDIDAD_BUSQUEDA = "basic"
+
+# Prioriza resultados precisos para que el investigador pueda
+# identificar documentación directamente relacionada con la consulta.
+PROFUNDIDAD_BUSQUEDA = "advanced"
+
+# La extracción básica es suficiente para recuperar texto y Markdown.
 PROFUNDIDAD_EXTRACCION = "basic"
 FORMATO_EXTRACCION = "markdown"
 

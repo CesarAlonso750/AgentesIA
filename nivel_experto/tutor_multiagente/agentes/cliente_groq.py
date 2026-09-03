@@ -1,12 +1,29 @@
+import logging  # Registra de forma segura cuándo se reintentará.
+import math  # Redondea la espera para no reintentar antes de tiempo.
+import time  # Realiza la espera indicada por Groq.
+from collections.abc import (
+    Callable,
+    Mapping,
+)
 from typing import Protocol  # Define contratos mediante tipado estructural.
 
-from groq import Groq  # Cliente oficial utilizado en la versión manual.
+from groq import (
+    Groq,
+    RateLimitError,
+)
 
 from nivel_experto.tutor_multiagente.config import (
+    MAX_ESPERA_REINTENTO_GROQ,
+    MAX_REINTENTOS_LIMITE_GROQ,
     MAX_REINTENTOS_SDK_GROQ,
     obtener_variable_entorno,
 )
 
+# Registra el reintento sin incluir respuestas, prompts ni cabeceras.
+from nivel_experto.tutor_multiagente.logging_config import (
+    NOMBRE_LOGGER,
+    registrar_evento,
+)
 
 class CreadorCompletions(Protocol):
     """
@@ -53,6 +70,154 @@ def crear_cliente_groq() -> Groq:
         api_key=api_key,
         max_retries=MAX_REINTENTOS_SDK_GROQ,
     )
+
+def obtener_espera_reintento_groq(
+    error: object,
+) -> int | None:
+    """
+    Recupera una espera segura desde la cabecera retry-after.
+
+    Args:
+        error: Excepción RateLimitError producida por el SDK.
+
+    Returns:
+        Segundos enteros de espera o None si no debe reintentarse.
+    """
+    # El SDK conserva la respuesta HTTP dentro de la excepción.
+    respuesta = getattr(
+        error,
+        "response",
+        None,
+    )
+    cabeceras = getattr(
+        respuesta,
+        "headers",
+        None,
+    )
+
+    # No inventa una espera cuando el proveedor no la proporciona.
+    if not isinstance(cabeceras, Mapping):
+        return None
+
+    valor_retry_after = cabeceras.get(
+        "retry-after"
+    )
+
+    # bool debe rechazarse aunque sea una subclase de int.
+    if isinstance(valor_retry_after, bool):
+        return None
+
+    try:
+        segundos_originales = float(
+            valor_retry_after
+        )
+    except (TypeError, ValueError):
+        return None
+
+    # Rechaza NaN, infinito, cero y valores negativos.
+    if (
+        not math.isfinite(segundos_originales)
+        or segundos_originales <= 0
+    ):
+        return None
+
+    # Espera hasta el siguiente segundo completo para no adelantarse.
+    segundos = math.ceil(
+        segundos_originales
+    )
+
+    # Si la espera es excesiva, devuelve el control al usuario.
+    if segundos > MAX_ESPERA_REINTENTO_GROQ:
+        return None
+
+    return segundos
+
+
+def solicitar_completion_groq(
+    cliente: ClienteGroq,
+    pausa: Callable[[float], None] = time.sleep,
+    **parametros: object,
+) -> object:
+    """
+    Solicita una respuesta y aplica reintentos limitados ante un 429 recuperable.
+
+    Args:
+        cliente: Cliente real o simulado con chat.completions.create.
+        pausa: Función de espera sustituible durante las pruebas.
+        parametros: Parámetros enviados a Groq.
+
+    Returns:
+        Respuesta producida por Groq.
+
+    Raises:
+        TypeError: Si pausa no es invocable.
+        RateLimitError: Si no hay espera válida o se agotan los reintentos.
+    """
+    if not callable(pausa):
+        raise TypeError(
+            "La función de pausa debe ser invocable."
+        )
+
+    reintentos_realizados = 0
+
+    while True:
+        try:
+            return cliente.chat.completions.create(
+                **parametros
+            )
+        except RateLimitError as error:
+            espera_segundos = obtener_espera_reintento_groq(
+                error
+            )
+
+            # No inventa una espera cuando la cabecera está ausente,
+            # es inválida o supera el máximo local.
+            if espera_segundos is None:
+                registrar_evento(
+                    logging.getLogger(
+                        NOMBRE_LOGGER
+                    ),
+                    "reintento_descartado",
+                    nivel=logging.WARNING,
+                    resultado="espera_no_admitida",
+                    iteracion=reintentos_realizados,
+                )
+                raise
+
+            # Detiene el ciclo cuando ya se utilizaron todos los
+            # reintentos permitidos por la configuración.
+            if (
+                reintentos_realizados
+                >= MAX_REINTENTOS_LIMITE_GROQ
+            ):
+                registrar_evento(
+                    logging.getLogger(
+                        NOMBRE_LOGGER
+                    ),
+                    "reintento_descartado",
+                    nivel=logging.WARNING,
+                    resultado="reintentos_agotados",
+                    iteracion=reintentos_realizados,
+                )
+                raise
+
+            reintentos_realizados += 1
+
+            # Informa de la espera sin registrar las cabeceras completas.
+            registrar_evento(
+                logging.getLogger(
+                    NOMBRE_LOGGER
+                ),
+                "reintento_programado",
+                nivel=logging.WARNING,
+                resultado="limite_groq",
+                iteracion=reintentos_realizados,
+                espera_segundos=espera_segundos,
+            )
+
+            pausa(
+                espera_segundos
+            )
 
 def obtener_contenido_respuesta(respuesta: object) -> str:
     """

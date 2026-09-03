@@ -415,5 +415,7 @@ def test_eventos_permitidos_no_incluyen_datos_sensibles():
     """
     assert "evaluacion_completada" in EVENTOS_PERMITIDOS
     assert "progreso_guardado" in EVENTOS_PERMITIDOS
+    assert "reintento_programado" in EVENTOS_PERMITIDOS
+    assert "reintento_descartado" in EVENTOS_PERMITIDOS
     assert "prompt" not in EVENTOS_PERMITIDOS
     assert "respuesta_usuario" not in EVENTOS_PERMITIDOS

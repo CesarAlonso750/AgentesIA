@@ -24,10 +24,15 @@ from nivel_experto.tutor_multiagente.agentes.tutor_investigador import (
     ejecutar_investigacion_completa,
     ejecutar_redaccion_borrador,
     ejecutar_seleccion_fuentes,
+    enriquecer_consulta_extraccion,
     interpretar_borrador_tutor,
     interpretar_seleccion_fuentes,
+    precisar_urls_extraccion,
+    reparar_citas_borrador_generado,
     resolver_fuentes_borrador,
     resolver_urls_seleccionadas,
+    validar_precision_borrador_java_actual,
+    validar_sintaxis_solucion_python,
 )
 from nivel_experto.tutor_multiagente.agentes import (
     tutor_investigador as modulo_tutor_investigador,
@@ -161,6 +166,59 @@ class ClienteExtraccionCadenaSimulado:
         self.parametros_recibidos = parametros
 
         return self.respuesta
+
+def test_precisar_urls_java_conserva_jls_mas_reciente():
+    """
+    Conserva la JLS más reciente y dirige Extract a su sección 9.4.
+    """
+    tutorial = (
+        "https://docs.oracle.com/javase/tutorial/"
+        "java/IandI/abstract.html"
+    )
+    jls_11 = (
+        "https://docs.oracle.com/javase/specs/jls/"
+        "se11/html/jls-9.html"
+    )
+    jls_17 = (
+        "https://docs.oracle.com/javase/specs/jls/"
+        "se17/html/jls-9.html"
+    )
+
+    resultado = precisar_urls_extraccion(
+        tecnologia="java",
+        consulta=(
+            "difference between interface and "
+            "abstract class in Java current"
+        ),
+        urls=[
+            tutorial,
+            jls_11,
+            jls_17,
+        ],
+    )
+
+    assert resultado == [
+        tutorial,
+        f"{jls_17}#jls-9.4",
+    ]
+
+
+def test_precisar_urls_conserva_temas_no_relacionados():
+    """
+    No modifica las URL cuando la consulta no trata sobre interfaces.
+    """
+    urls = [
+        "https://docs.oracle.com/en/java/"
+    ]
+
+    resultado = precisar_urls_extraccion(
+        tecnologia="java",
+        consulta="Java exception handling",
+        urls=urls,
+    )
+
+    assert resultado == urls
+
 
 def test_resolver_urls_conserva_orden_de_seleccion():
     """Comprueba que las URL sigan el orden decidido por el agente."""
@@ -354,6 +412,65 @@ def test_resolver_urls_rechaza_identificadores_duplicados_en_busqueda():
             resultados,
         )
 
+def test_enriquecer_consulta_extraccion_comparativa():
+    """
+    Añade información mínima para recuperar excepciones y versiones.
+    """
+    resultado = enriquecer_consulta_extraccion(
+        (
+            "Compare interfaces and abstract classes: "
+            "methods and inheritance"
+        ),
+        (
+            "difference between interface and "
+            "abstract class in Java current"
+        ),
+    )
+
+    assert "Include current behavior" in resultado
+    assert "version changes" in resultado
+    assert "access and visibility rules" in resultado
+    assert "documented exceptions" in resultado
+    assert (
+        "public and private interface method declarations"
+        in resultado
+    )
+    assert len(resultado) <= 300
+
+
+def test_enriquecer_consulta_extraccion_conserva_consulta_normal():
+    """
+    No añade información comparativa a una consulta sencilla.
+    """
+    consulta = "How list.append works in Python"
+
+    resultado = enriquecer_consulta_extraccion(
+        consulta,
+        consulta,
+    )
+
+    assert resultado == consulta
+
+
+def test_enriquecer_consulta_extraccion_limita_longitud():
+    """
+    Conserva el límite de seguridad aunque la consulta sea muy larga.
+    """
+    consulta_generada = (
+        "Compare technical concepts and their different behavior "
+        * 5
+    )
+
+    resultado = enriquecer_consulta_extraccion(
+        consulta_generada,
+        "difference between two current Java concepts",
+    )
+
+    assert len(resultado) <= 300
+    assert "documented exceptions" in resultado
+    assert resultado.endswith("documented exceptions.")
+
+
 def test_prompt_seleccion_fuentes_define_limites_del_agente():
     """Comprueba las instrucciones esenciales de esta fase."""
     # Normaliza saltos de línea para no depender del formato visual.
@@ -369,10 +486,35 @@ def test_prompt_seleccion_fuentes_define_limites_del_agente():
     assert "Todavía no debes explicar el concepto" in prompt_normalizado
     assert "datos externos" in prompt_normalizado
     assert "Evita seleccionar versiones duplicadas" in prompt_normalizado
-    assert "prefiere el idioma utilizado por el estudiante" in (
-        prompt_normalizado
+    assert "prefiere el idioma utilizado por el estudiante" in prompt_normalizado
+    assert "prefiere la versión actual" in prompt_normalizado
+    assert "versión antigua solamente cuando" in prompt_normalizado
+
+        # La extracción debe investigar comparaciones de forma completa.
+    assert (
+        "diferencias técnicas, límites y excepciones"
+        in prompt_normalizado
     )
 
+    # Las tecnologías versionadas requieren información vigente.
+    assert "comportamiento actual" in prompt_normalizado
+    assert "cambios relevantes entre versiones" in prompt_normalizado
+    assert (
+        "invalidar afirmaciones absolutas"
+        in prompt_normalizado
+    )
+
+    # Debe solicitar aspectos que puedan revelar excepciones importantes.
+    assert (
+        "visibilidad, acceso, miembros permitidos"
+        in prompt_normalizado
+    )
+
+    # La consulta debe utilizar el idioma de la documentación elegida.
+    assert (
+        "idioma predominante de las páginas seleccionadas"
+        in prompt_normalizado
+    )
 
 def test_construir_mensaje_seleccion_serializa_resultados():
     """Comprueba normalización, JSON y eliminación de campos innecesarios."""
@@ -830,6 +972,141 @@ def test_ejecutar_seleccion_corrige_identificador_inexistente():
     assert "no existe en la búsqueda actual" in mensajes[3]["content"]
     assert "no inventes URLs" in mensajes[3]["content"]
 
+def test_ejecutar_seleccion_reintenta_json_rechazado_por_groq(
+    monkeypatch,
+):
+    """
+    Corrige una selección cuyo motivo supera el límite del esquema.
+    """
+    class BadRequestGroqSimulado(Exception):
+        """Representa el error HTTP 400 devuelto por Groq."""
+
+        def __init__(self, mensaje, body):
+            super().__init__(mensaje)
+            self.body = body
+
+    # Sustituye temporalmente la excepción real del SDK.
+    monkeypatch.setattr(
+        modulo_tutor_investigador,
+        "BadRequestError",
+        BadRequestGroqSimulado,
+    )
+
+    resultados = [
+        {
+            "id": "resultado-1",
+            "titulo": "Abstract Methods and Classes",
+            "url": (
+                "https://docs.oracle.com/javase/tutorial/"
+                "java/IandI/abstract.html"
+            ),
+            "resumen": (
+                "Documentación oficial sobre clases abstractas."
+            ),
+        },
+        {
+            "id": "resultado-2",
+            "titulo": "Chapter 9. Interfaces",
+            "url": (
+                "https://docs.oracle.com/javase/specs/jls/"
+                "se17/html/jls-9.html"
+            ),
+            "resumen": (
+                "Especificación oficial sobre interfaces."
+            ),
+        },
+    ]
+
+    # Reproduce un motivo de más de 500 caracteres.
+    generacion_fallida = json.dumps(
+        {
+            "resultados_seleccionados": [
+                "resultado-1",
+                "resultado-2",
+            ],
+            "resultados_suficientes": True,
+            "consulta_extraccion": (
+                "Comparar interfaces y clases abstractas en Java."
+            ),
+            "motivo": "Explicación demasiado extensa. " * 25,
+        },
+        ensure_ascii=False,
+    )
+
+    error_json = BadRequestGroqSimulado(
+        "Generated JSON does not match the expected schema.",
+        body={
+            "error": {
+                "code": "json_validate_failed",
+                "failed_generation": generacion_fallida,
+            }
+        },
+    )
+
+    seleccion_corregida = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="""
+                    {
+                        "resultados_seleccionados": [
+                            "resultado-1",
+                            "resultado-2"
+                        ],
+                        "resultados_suficientes": true,
+                        "consulta_extraccion":
+                            "Comparar interfaces y clases abstractas.",
+                        "motivo":
+                            "Ambas fuentes documentan la comparación."
+                    }
+                    """,
+                )
+            )
+        ]
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuestas=[
+            error_json,
+            seleccion_corregida,
+        ]
+    )
+
+    seleccion = ejecutar_seleccion_fuentes(
+        tecnologia="java",
+        consulta=(
+            "difference between interface and abstract class "
+            "in Java current"
+        ),
+        resultados_busqueda=resultados,
+        cliente=cliente,
+    )
+
+    # El segundo intento debe producir una selección válida.
+    assert seleccion.resultados_seleccionados == [
+        "resultado-1",
+        "resultado-2",
+    ]
+    assert seleccion.resultados_suficientes is True
+    assert cliente.completions.numero_llamadas == 2
+
+    # Comprueba las instrucciones enviadas para corregir el JSON.
+    mensajes_segundo_intento = (
+        cliente.completions.historial_parametros[1]["messages"]
+    )
+
+    assert mensajes_segundo_intento[2]["role"] == "assistant"
+    assert mensajes_segundo_intento[2]["content"] == (
+        generacion_fallida
+    )
+
+    mensaje_correccion = mensajes_segundo_intento[3]["content"]
+
+    assert "JSON Schema" in mensaje_correccion
+    assert "resultados_seleccionados" in mensaje_correccion
+    assert "consulta_extraccion" in mensaje_correccion
+    assert "motivo" in mensaje_correccion
+    assert "500 caracteres" in mensaje_correccion
 
 def test_ejecutar_seleccion_se_detiene_tras_dos_ids_inexistentes():
     """Comprueba que la corrección nunca forme un bucle infinito."""
@@ -1768,6 +2045,39 @@ def test_prompt_redaccion_exige_citas_internas_coherentes():
         in PROMPT_REDACCION_BORRADOR
     )
 
+def test_prompt_redaccion_controla_afirmaciones_versionadas():
+    """
+    Evita presentar reglas históricas o parciales como verdades actuales.
+    """
+    # Convierte saltos de línea y espacios repetidos en espacios simples.
+    prompt_normalizado = " ".join(
+        PROMPT_REDACCION_BORRADOR.split()
+    )
+
+    # El redactor debe desconfiar de generalizaciones absolutas.
+    assert (
+        'Evita afirmaciones absolutas como "todos", "ninguno", "siempre"'
+        in prompt_normalizado
+    )
+
+    # Debe distinguir el comportamiento actual del comportamiento histórico.
+    assert (
+        "no presentes como actual una regla histórica"
+        in prompt_normalizado
+    )
+
+    # Cuando existan varias versiones, debe priorizar la más reciente.
+    assert (
+        "Prioriza la fuente más reciente aplicable"
+        in prompt_normalizado
+    )
+
+    # Si las fuentes son insuficientes, no puede completar usando memoria.
+    assert (
+        "limita, matiza u omite la afirmación"
+        in prompt_normalizado
+    )
+
 
 def test_prompt_redaccion_diferencia_explicacion_y_ejercicio():
     """
@@ -2032,6 +2342,95 @@ def test_interpretar_borrador_rechaza_propiedades_inventadas():
     ):
         interpretar_borrador_tutor(respuesta)
 
+def test_reparar_citas_borrador_agrega_solo_las_faltantes():
+    """
+    Añade citas omitidas sin duplicar las que ya existen.
+    """
+    contenido = json.dumps(
+        {
+            "tipo": "explicacion",
+            "titulo": "Métodos de las listas",
+            "contenido_markdown": (
+                "La primera afirmación utiliza [fuente-1]. "
+                "La segunda también procede de documentación oficial."
+            ),
+            "fuentes_utilizadas": [
+                "fuente-1",
+                "fuente-2",
+            ],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        },
+        ensure_ascii=False,
+    )
+
+    contenido_reparado = reparar_citas_borrador_generado(
+        contenido
+    )
+
+    datos_reparados = json.loads(contenido_reparado)
+    texto_reparado = datos_reparados["contenido_markdown"]
+
+    # La cita existente se conserva sin duplicarse.
+    assert texto_reparado.count("[fuente-1]") == 1
+
+    # La cita declarada pero ausente se añade al final.
+    assert texto_reparado.endswith(
+        "Fuentes: [fuente-2]"
+    )
+
+    # El resultado debe superar todavía el modelo estricto.
+    borrador = interpretar_borrador_tutor(
+        contenido_reparado
+    )
+
+    assert borrador.fuentes_utilizadas == [
+        "fuente-1",
+        "fuente-2",
+    ]
+
+
+def test_ejecutar_redaccion_repara_omision_cita_declarada():
+    """
+    Reproduce la omisión de [fuente-1] observada con Groq real.
+    """
+    respuesta_sin_cita = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "explicacion",
+            "titulo": "El método append",
+            "contenido_markdown": (
+                "El método append añade un elemento al final "
+                "de una lista de Python."
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        }
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuesta=respuesta_sin_cita,
+    )
+
+    borrador = ejecutar_redaccion_borrador(
+        accion="responder_consulta",
+        tecnologia="python",
+        peticion_usuario="¿Qué hace append?",
+        consulta_documentacion="método append de listas",
+        fuentes_extraidas=[
+            _crear_fuente_extraida(),
+        ],
+        cliente=cliente,
+    )
+
+    # La reparación evita consumir un segundo intento de Groq.
+    assert cliente.completions.numero_llamadas == 1
+
+    assert borrador.fuentes_utilizadas == ["fuente-1"]
+    assert borrador.contenido_markdown.endswith(
+        "Fuentes: [fuente-1]"
+    )
+
 def test_ejecutar_redaccion_genera_explicacion_validada():
     """
     Comprueba una llamada completa utilizando un cliente simulado.
@@ -2237,6 +2636,354 @@ def test_ejecutar_redaccion_corrige_fuente_inexistente():
         mensaje_correccion
     )
 
+def test_validar_sintaxis_solucion_python_acepta_codigo_valido():
+    """
+    Permite una solución privada con código Python válido.
+    """
+    borrador = BorradorTutor(
+        tipo="ejercicio",
+        titulo="Practica con append",
+        contenido_markdown=(
+            "Añade un número a la lista utilizando append. "
+            "[fuente-1]"
+        ),
+        fuentes_utilizadas=["fuente-1"],
+        solucion_esperada=(
+            "def agregar_numero(lista, numero):\n"
+            "    lista.append(numero)\n"
+            "    return lista"
+        ),
+        criterios_evaluacion=[
+            "Utiliza append correctamente.",
+        ],
+    )
+
+    resultado = validar_sintaxis_solucion_python(
+        borrador=borrador,
+        tecnologia="python",
+    )
+
+    assert resultado is None
+
+
+def test_validar_sintaxis_solucion_python_rechaza_sangria_invalida():
+    """
+    Rechaza el defecto observado en la prueba funcional real.
+    """
+    borrador = BorradorTutor(
+        tipo="ejercicio",
+        titulo="Practica con append",
+        contenido_markdown=(
+            "Añade un número a la lista utilizando append. "
+            "[fuente-1]"
+        ),
+        fuentes_utilizadas=["fuente-1"],
+        solucion_esperada=(
+            "def agregar_numero(lista, numero):\n"
+            "   lista.append(numero)\n"
+            "    return lista"
+        ),
+        criterios_evaluacion=[
+            "Utiliza append correctamente.",
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="sintaxis o sangría inválida",
+    ):
+        validar_sintaxis_solucion_python(
+            borrador=borrador,
+            tecnologia="python",
+        )
+
+
+def test_validar_sintaxis_solucion_python_acepta_descripcion():
+    """
+    No intenta compilar una solución explicada en lenguaje natural.
+    """
+    borrador = BorradorTutor(
+        tipo="ejercicio",
+        titulo="Practica con append",
+        contenido_markdown=(
+            "Añade un número a la lista utilizando append. "
+            "[fuente-1]"
+        ),
+        fuentes_utilizadas=["fuente-1"],
+        solucion_esperada=(
+            "Crear la lista y llamar al método append."
+        ),
+        criterios_evaluacion=[
+            "Utiliza append correctamente.",
+        ],
+    )
+
+    resultado = validar_sintaxis_solucion_python(
+        borrador=borrador,
+        tecnologia="python",
+    )
+
+    assert resultado is None
+
+
+def test_ejecutar_redaccion_corrige_solucion_python_invalida():
+    """
+    Solicita otro borrador cuando la solución privada no compila.
+    """
+    respuesta_incorrecta = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "ejercicio",
+            "titulo": "Practica con append",
+            "contenido_markdown": (
+                "Añade un número a una lista con append. "
+                "[fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": (
+                "def agregar_numero(lista, numero):\n"
+                "   lista.append(numero)\n"
+                "    return lista"
+            ),
+            "criterios_evaluacion": [
+                "Utiliza append correctamente.",
+            ],
+        }
+    )
+
+    respuesta_corregida = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "ejercicio",
+            "titulo": "Practica con append",
+            "contenido_markdown": (
+                "Añade un número a una lista con append. "
+                "[fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": (
+                "def agregar_numero(lista, numero):\n"
+                "    lista.append(numero)\n"
+                "    return lista"
+            ),
+            "criterios_evaluacion": [
+                "Utiliza append correctamente.",
+            ],
+        }
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuestas=[
+            respuesta_incorrecta,
+            respuesta_corregida,
+        ]
+    )
+
+    borrador = ejecutar_redaccion_borrador(
+        accion="generar_ejercicio",
+        tecnologia="python",
+        peticion_usuario=(
+            "Ponme un ejercicio sobre append."
+        ),
+        consulta_documentacion=(
+            "Python list append method"
+        ),
+        fuentes_extraidas=[
+            _crear_fuente_extraida(),
+        ],
+        cliente=cliente,
+    )
+
+    # El primer resultado inválido debe provocar una segunda llamada.
+    assert cliente.completions.numero_llamadas == 2
+
+    # La solución finalmente conservada debe ser código válido.
+    assert borrador.solucion_esperada is not None
+    compile(
+        borrador.solucion_esperada,
+        "<solucion_esperada>",
+        "exec",
+    )
+
+    # El segundo intento debe recibir el motivo concreto del rechazo.
+    mensaje_correccion = (
+        cliente.completions.historial_parametros[1]
+        ["messages"][-1]["content"]
+    )
+
+    assert "sintaxis o sangría inválida" in mensaje_correccion
+
+@pytest.mark.parametrize(
+    "afirmacion_incorrecta",
+    [
+        (
+            "En una interfaz, los métodos son "
+            "obligatoriamente `public`."
+        ),
+        (
+            "Las interfaces admiten métodos `default`, "
+            "pero sus métodos siguen siendo públicos."
+        ),
+        (
+            "Interface methods must be public."
+        ),
+    ],
+)
+
+def test_validar_precision_java_rechaza_generalizaciones_publicas(
+    afirmacion_incorrecta,
+):
+    """
+    Rechaza variantes absolutas que omiten métodos private.
+    """
+    borrador = BorradorTutor(
+        tipo="explicacion",
+        titulo="Interfaces actuales de Java",
+        contenido_markdown=(
+            f"{afirmacion_incorrecta} [fuente-1]"
+        ),
+        fuentes_utilizadas=["fuente-1"],
+        solucion_esperada=None,
+        criterios_evaluacion=[],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="también pueden existir métodos private",
+    ):
+        validar_precision_borrador_java_actual(
+            borrador=borrador,
+            tecnologia="java",
+            consulta=(
+                "difference between interface and abstract class "
+                "in Java current"
+            ),
+        )
+
+def test_validar_precision_java_acepta_metodos_publicos_y_privados():
+    """
+    Permite una explicación compatible con Java actual.
+    """
+    borrador = BorradorTutor(
+        tipo="explicacion",
+        titulo="Interfaces actuales de Java",
+        contenido_markdown=(
+            "Los métodos de una interfaz sin modificador de acceso "
+            "son implícitamente `public`. Una interfaz también puede "
+            "declarar métodos `private`. [fuente-1]"
+        ),
+        fuentes_utilizadas=["fuente-1"],
+        solucion_esperada=None,
+        criterios_evaluacion=[],
+    )
+
+    resultado = validar_precision_borrador_java_actual(
+        borrador=borrador,
+        tecnologia="java",
+        consulta=(
+            "difference between interface and abstract class "
+            "in Java current"
+        ),
+    )
+
+    assert resultado is None
+
+
+def test_ejecutar_redaccion_corrige_generalizacion_metodos_publicos():
+    """
+    Corrige la afirmación de que todos los métodos son públicos.
+    """
+    respuesta_incorrecta = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "explicacion",
+            "titulo": "Interfaces y clases abstractas",
+            "contenido_markdown": (
+                "Las interfaces definen contratos. Todos los métodos "
+                "son implícitamente `public`. [fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        }
+    )
+
+    respuesta_corregida = _crear_respuesta_groq_simulada(
+        {
+            "tipo": "explicacion",
+            "titulo": "Interfaces y clases abstractas",
+            "contenido_markdown": (
+                "Los métodos de interfaz sin modificador de acceso "
+                "son implícitamente `public`. Java actual también "
+                "permite declarar métodos `private` en una interfaz. "
+                "[fuente-1]"
+            ),
+            "fuentes_utilizadas": ["fuente-1"],
+            "solucion_esperada": None,
+            "criterios_evaluacion": [],
+        }
+    )
+
+    cliente = ClienteSeleccionSimulado(
+        respuestas=[
+            respuesta_incorrecta,
+            respuesta_corregida,
+        ]
+    )
+
+    borrador = ejecutar_redaccion_borrador(
+        accion="responder_consulta",
+        tecnologia="java",
+        peticion_usuario=(
+            "¿Qué diferencia hay entre una interfaz "
+            "y una clase abstracta en Java?"
+        ),
+        consulta_documentacion=(
+            "difference between interface and abstract class "
+            "in Java current"
+        ),
+        fuentes_extraidas=[
+            _crear_fuente_extraida(
+                url=(
+                    "https://docs.oracle.com/javase/specs/jls/"
+                    "se17/html/jls-9.html#jls-9.4"
+                ),
+                contenido=(
+                    "A method in the body of an interface declaration "
+                    "may be declared public or private. If no access "
+                    "modifier is given, the method is implicitly public."
+                ),
+            ),
+        ],
+        cliente=cliente,
+    )
+
+    # El primer borrador debe rechazarse y corregirse.
+    assert cliente.completions.numero_llamadas == 2
+    assert "también permite declarar métodos `private`" in (
+        borrador.contenido_markdown
+    )
+
+    # La segunda llamada debe explicar exactamente el problema.
+    mensaje_correccion = (
+        cliente.completions.historial_parametros[1]
+        ["messages"][-1]["content"]
+    )
+
+    assert "todos los métodos de una interfaz son públicos" in (
+        mensaje_correccion
+    )
+    assert "métodos private" in mensaje_correccion
+    # La corrección debe explicar la regla completa de Java actual.
+    assert (
+        "pueden declararse public o private"
+        in mensaje_correccion
+    )
+    assert (
+        "si no tienen modificador de acceso"
+        in mensaje_correccion
+    )
+    assert (
+        "Prioriza la Java Language Specification actual"
+        in mensaje_correccion
+    )
 
 def test_ejecutar_redaccion_limita_borradores_invalidos():
     """
@@ -2406,7 +3153,9 @@ def test_ejecutar_redaccion_controla_error_externo_inesperado():
 
     assert cliente.completions.numero_llamadas == 1
 
-def test_ejecutar_investigacion_encadena_todas_las_fases():
+def test_ejecutar_investigacion_encadena_todas_las_fases(
+    monkeypatch,
+):
     """
     Comprueba búsqueda, selección, extracción y redacción completas.
     """
@@ -2485,6 +3234,31 @@ def test_ejecutar_investigacion_encadena_todas_las_fases():
         )
     )
 
+        # Permite comprobar que la precisión de URL forma parte del flujo.
+    llamadas_precision = []
+
+    def precisar_urls_simuladas(
+        tecnologia,
+        consulta,
+        urls,
+    ):
+        """Conserva las URL mientras registra los parámetros recibidos."""
+        llamadas_precision.append(
+            {
+                "tecnologia": tecnologia,
+                "consulta": consulta,
+                "urls": list(urls),
+            }
+        )
+
+        return list(urls)
+
+    monkeypatch.setattr(
+        modulo_tutor_investigador,
+        "precisar_urls_extraccion",
+        precisar_urls_simuladas,
+    )
+
     resultado = ejecutar_investigacion_completa(
         accion="responder_consulta",
         tecnologia="python",
@@ -2499,6 +3273,15 @@ def test_ejecutar_investigacion_encadena_todas_las_fases():
         cliente_extraccion=cliente_extraccion,
         cliente_redaccion=cliente_redaccion,
     )
+
+        # La precisión de URL se ejecuta entre la selección y la extracción.
+    assert llamadas_precision == [
+        {
+            "tecnologia": "python",
+            "consulta": "diferencia entre append y extend",
+            "urls": [url_oficial],
+        }
+    ]
 
     # Todas las fases deben ejecutarse exactamente una vez.
     assert cliente_busqueda.numero_llamadas == 1
@@ -2530,10 +3313,31 @@ def test_ejecutar_investigacion_encadena_todas_las_fases():
         url_oficial
     ]
 
-    # La consulta creada por el selector llega a la extracción.
+    # La consulta creada por el selector llega enriquecida a la extracción.
+    consulta_enviada = (
+        cliente_extraccion.parametros_recibidos["query"]
+    )
+
     assert (
         "comportamiento de list.append y list.extend"
-        in cliente_extraccion.parametros_recibidos["query"]
+        in consulta_enviada
+    )
+    assert "Include current behavior" in consulta_enviada
+    assert "version changes" in consulta_enviada
+    assert "access and visibility rules" in consulta_enviada
+    assert "documented exceptions" in consulta_enviada
+    assert len(consulta_enviada) <= 300
+
+    # La selección conserva la consulta técnica enriquecida.
+    assert seleccion.consulta_extraccion is not None
+    assert "Include current behavior" in (
+        seleccion.consulta_extraccion
+    )
+
+    # La herramienta añade el nombre de la tecnología para orientar
+    # la recuperación de fragmentos realizada por Tavily.
+    assert consulta_enviada == (
+        f"Python {seleccion.consulta_extraccion}"
     )
 
     # Tavily Extract genera el identificador interno fuente-1.
@@ -2603,8 +3407,9 @@ def test_investigacion_se_detiene_si_busqueda_no_encuentra_resultados():
             cliente_redaccion=cliente_redaccion,
         )
 
-    # Solo debe haberse ejecutado Tavily Search.
-    assert cliente_busqueda.numero_llamadas == 1
+    # Solo debe haberse ejecutado Tavily Search: un intento avanzado
+    # y un único intento básico de respaldo.
+    assert cliente_busqueda.numero_llamadas == 2
     assert cliente_seleccion.completions.numero_llamadas == 0
     assert cliente_extraccion.numero_llamadas == 0
     assert cliente_redaccion.completions.numero_llamadas == 0

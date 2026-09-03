@@ -112,7 +112,8 @@ def test_buscar_documentacion_filtra_y_normaliza_resultados():
 
     # Comprueba la consulta y configuración entregadas al cliente.
     assert cliente.consulta_recibida == "Python append y extend"
-    assert cliente.parametros_recibidos["search_depth"] == "basic"
+    assert cliente.parametros_recibidos["search_depth"] == "advanced"
+    assert cliente.parametros_recibidos["chunks_per_source"] == 3
     assert cliente.parametros_recibidos["max_results"] == 5
     assert cliente.parametros_recibidos["include_domains"] == [
         "docs.python.org"
@@ -139,6 +140,95 @@ def test_buscar_documentacion_controla_lista_vacia():
     assert resultado["resultados"] == []
     assert "No se encontró" in resultado["error"]
 
+def test_buscar_documentacion_usa_respaldo_si_advanced_esta_vacia():
+    """
+    Repite una búsqueda vacía una sola vez con profundidad basic.
+    """
+    class ClienteBusquedaSecuencialSimulado:
+        """Devuelve una respuesta diferente en cada llamada."""
+
+        def __init__(self):
+            self.numero_llamadas = 0
+            self.historial_parametros = []
+
+            self.respuestas = [
+                {
+                    "results": [],
+                },
+                {
+                    "results": [
+                        {
+                            "title": "Chapter 9. Interfaces",
+                            "url": (
+                                "https://docs.oracle.com/javase/"
+                                "specs/jls/se17/html/jls-9.html"
+                            ),
+                            "content": (
+                                "Official Java specification about "
+                                "interfaces."
+                            ),
+                            "score": 0.90,
+                        }
+                    ],
+                },
+            ]
+
+        def search(self, query, **parametros):
+            """Imita dos respuestas consecutivas de Tavily."""
+            self.numero_llamadas += 1
+
+            self.historial_parametros.append(
+                {
+                    "query": query,
+                    **parametros,
+                }
+            )
+
+            indice = self.numero_llamadas - 1
+            return self.respuestas[indice]
+
+    cliente = ClienteBusquedaSecuencialSimulado()
+
+    consulta = (
+        "difference between interface and abstract class "
+        "in Java current"
+    )
+
+    resultado = buscar_documentacion(
+        tecnologia="java",
+        consulta=consulta,
+        cliente=cliente,
+    )
+
+    # El segundo intento debe recuperar una página oficial válida.
+    assert resultado["ok"] is True
+    assert resultado["tecnologia"] == "java"
+    assert len(resultado["resultados"]) == 1
+    assert cliente.numero_llamadas == 2
+
+    primer_intento = cliente.historial_parametros[0]
+    segundo_intento = cliente.historial_parametros[1]
+
+    # La búsqueda principal conserva la configuración avanzada.
+    assert primer_intento["query"] == f"Java {consulta}"
+    assert primer_intento["search_depth"] == "advanced"
+    assert primer_intento["chunks_per_source"] == 3
+
+    # El respaldo utiliza una consulta directa y profundidad básica.
+    assert segundo_intento["query"] == consulta
+    assert segundo_intento["search_depth"] == "basic"
+    assert segundo_intento["chunks_per_source"] == 1
+
+    # Ambos intentos utilizan exactamente el mismo catálogo oficial.
+    assert segundo_intento["include_domains"] == (
+        primer_intento["include_domains"]
+    )
+
+    # Java admite sus dos dominios oficiales configurados.
+    assert set(primer_intento["include_domains"]) == {
+        "dev.java",
+        "docs.oracle.com",
+    }
 
 def test_buscar_documentacion_controla_respuesta_mal_formada():
     """Comprueba que una respuesta externa inválida no cierre el programa."""
