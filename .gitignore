@@ -9,3 +9,16 @@ __pycache__/
 
 # Evita subir archivos compilados de Python.
 *.pyc
+
+# Evita subir la caché temporal generada por pytest.
+.pytest_cache/
+
+# Evita publicar el progreso personal generado durante el uso.
+nivel_experto/datos/progreso/*.json
+
+# Evita preparar temporales si una escritura se interrumpe.
+nivel_experto/datos/progreso/*.tmp
+
+# Evita publicar los logs generados durante la ejecución.
+nivel_experto/logs/*.log
+nivel_experto/logs/*.log.*
